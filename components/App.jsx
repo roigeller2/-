@@ -184,11 +184,15 @@ async function storagePing() {
 async function loadCollection(key) {
   try {
     const res = await fetch(API_PATH[key], { cache: 'no-store' });
-    if (!res.ok) return [];
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || `שגיאת שרת (קוד ${res.status})`);
+    }
     const data = await res.json();
     return Array.isArray(data.value) ? data.value : [];
   } catch (e) {
-    return [];
+    console.error(`[loadCollection] קריאת "${key}" נכשלה:`, e);
+    throw e;
   }
 }
 
@@ -1995,7 +1999,15 @@ export default function App() {
   /* ---------- סנכרון מהאחסון המשותף ---------- */
 
   const refreshFromStorage = useCallback(async () => {
-    const [remoteP, remoteC] = await Promise.all([loadCollection(KEY_POSTINGS), loadCollection(KEY_COORDS)]);
+    // אם הקריאה נכשלת, לא נוגעים בנתונים המקומיים הקיימים — עדיף להשאיר
+    // את המסך כמו שהוא מאשר להחליף אותו בטעות בנתונים חלקיים/ריקים.
+    let remoteP, remoteC;
+    try {
+      [remoteP, remoteC] = await Promise.all([loadCollection(KEY_POSTINGS), loadCollection(KEY_COORDS)]);
+    } catch (e) {
+      console.error('[refreshFromStorage] הסנכרון נכשל, הנתונים המקומיים נשארים ללא שינוי:', e);
+      return;
+    }
     const mergedP = mergeById(postingsRef.current, remoteP);
     const mergedC = mergeById(coordsRef.current, remoteC);
     if (JSON.stringify(mergedP) !== JSON.stringify(postingsRef.current)) setPostings(mergedP);
@@ -2031,7 +2043,19 @@ export default function App() {
   /* ---------- כתיבה בטוחה: קרא-מזג-כתוב ---------- */
 
   const mutateCollection = useCallback(async (key, ref, setState, mutator) => {
-    const remote = await loadCollection(key);
+    // קריאה-לפני-כתיבה: אם לא ניתן לקרוא את הנתונים העדכניים מהשרת, עוצרים
+    // כאן ולא שולחים PUT בכלל — כתיבה על בסיס מידע חלקי/ריק עלולה לדרוס
+    // בטעות נתונים אמיתיים שכבר קיימים במסד המשותף.
+    let remote;
+    try {
+      remote = await loadCollection(key);
+    } catch (e) {
+      console.error(`[mutateCollection] השמירה ל-"${key}" בוטלה — לא ניתן היה לקרוא את הנתונים הקיימים מהשרת:`, e);
+      setStorageState(s => s === 'unavailable' ? s : 'error');
+      setLastError(e?.message || String(e));
+      showToast('השמירה בוטלה כדי להגן על הנתונים — לא ניתן היה לקרוא את המידע העדכני מהשרת. נסו שוב.');
+      return { ok: false, value: ref.current };
+    }
     const merged = mergeById(ref.current, remote);
     const next = mutator(merged);
     setState(next);
