@@ -1,0 +1,12 @@
+export const metadata = {
+  title: 'מערכת תיאום אימונים משותפים',
+  description: 'תיאום אימונים משותפים בין טייסות מסוקים לכוחות קרקעיים',
+};
+
+export default function RootLayout({ children }) {
+  return (
+    <html lang="he" dir="rtl">
+      <body style={{ margin: 0, padding: 0 }}>{children}</body>
+    </html>
+  );
+}
