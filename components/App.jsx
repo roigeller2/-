@@ -16,7 +16,7 @@ function HeliIcon({ size = 16, className = '' }) {
 
 /* ============================== קבועים ============================== */
 
-const APP_VERSION = 'Vercel · גרסה 2 (אמוג׳י מסוק)';
+const APP_VERSION = 'Vercel · גרסה 3';
 
 const REGION = 'איו״ש';
 
@@ -2071,11 +2071,6 @@ export default function App() {
 
   return (
     <div dir="rtl" lang="he" className="min-h-screen bg-slate-50 text-slate-900" style={{ fontFamily: "'Heebo', system-ui, sans-serif" }}>
-      <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700;800&family=Rubik:wght@600;700;800&display=swap');
-        h1, h2, h3 { font-family: 'Rubik', 'Heebo', system-ui, sans-serif; }
-        .font-mono { font-family: 'Rubik', monospace; }
-      `}</style>
       <div className="max-w-md mx-auto pb-20 min-h-screen bg-slate-50 relative">
 
         {storageState === 'unavailable' && (
