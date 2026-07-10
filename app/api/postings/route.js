@@ -8,7 +8,7 @@ export async function GET() {
     const data = await kv.get('postings');
     return NextResponse.json({ value: data || [] });
   } catch (e) {
-    return NextResponse.json({ value: [], error: String(e) }, { status: 200 });
+    return NextResponse.json({ value: [], error: String(e?.message || e) }, { status: 503 });
   }
 }
 
@@ -18,6 +18,6 @@ export async function PUT(request) {
     await kv.set('postings', body);
     return NextResponse.json({ ok: true });
   } catch (e) {
-    return NextResponse.json({ ok: false, error: String(e) }, { status: 500 });
+    return NextResponse.json({ ok: false, error: String(e?.message || e) }, { status: 500 });
   }
 }

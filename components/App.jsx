@@ -173,9 +173,11 @@ const API_PATH = { postings: '/api/postings', 'coordination-requests': '/api/coo
 async function storagePing() {
   try {
     const res = await fetch(API_PATH.postings, { cache: 'no-store' });
-    return res.ok;
+    if (res.ok) return { ok: true };
+    const data = await res.json().catch(() => ({}));
+    return { ok: false, error: data.error || `שגיאת שרת (קוד ${res.status})` };
   } catch (e) {
-    return false;
+    return { ok: false, error: e?.message || String(e) };
   }
 }
 
@@ -197,10 +199,16 @@ async function saveCollection(key, value) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(value),
     });
-    return res.ok;
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const error = data.error || `שגיאת שרת (קוד ${res.status})`;
+      console.error('storage save error', error);
+      return { ok: false, error };
+    }
+    return { ok: true };
   } catch (e) {
     console.error('storage save error', e);
-    return false;
+    return { ok: false, error: e?.message || String(e) };
   }
 }
 
@@ -1854,6 +1862,7 @@ export default function App() {
   const [postings, setPostings] = useState([]);
   const [coordRequests, setCoordRequests] = useState([]);
   const [storageState, setStorageState] = useState('checking'); // 'ok' | 'unavailable' | 'error'
+  const [lastError, setLastError] = useState('');
   const [lastSync, setLastSync] = useState(null);
   const [screen, setScreen] = useState('dashboard');
   const [params, setParams] = useState({});
@@ -1881,9 +1890,10 @@ export default function App() {
   useEffect(() => {
     let interval = null;
     (async () => {
-      const available = await storagePing();
-      if (!available) {
+      const ping = await storagePing();
+      if (!ping.ok) {
         setStorageState('unavailable');
+        setLastError(ping.error || '');
         setLoading(false);
         return;
       }
@@ -1910,15 +1920,21 @@ export default function App() {
     const next = mutator(merged);
     setState(next);
     ref.current = next;
-    const ok = await saveCollection(key, next);
-    if (!ok) {
+    const result = await saveCollection(key, next);
+    if (!result.ok) {
+      // השמירה בפועל נכשלה — מבטלים את העדכון האופטימי כדי שהממשק לא יראה
+      // כאילו הרשומה נשמרה, בזמן שהיא קיימת רק בזיכרון המקומי.
+      setState(merged);
+      ref.current = merged;
       setStorageState(s => s === 'unavailable' ? s : 'error');
-      showToast('שגיאה בשמירה — בדקו חיבור ונסו שוב');
-    } else {
-      setStorageState(s => s === 'unavailable' ? s : 'ok');
-      setLastSync(new Date());
+      setLastError(result.error || '');
+      showToast(`שגיאת שמירה: ${result.error || 'שגיאה לא ידועה בשרת'}`);
+      return { ok: false, value: merged };
     }
-    return next;
+    setStorageState(s => s === 'unavailable' ? s : 'ok');
+    setLastError('');
+    setLastSync(new Date());
+    return { ok: true, value: next };
   }, []);
 
   const mutatePostings = (mutator) => mutateCollection(KEY_POSTINGS, postingsRef, setPostings, mutator);
@@ -1949,18 +1965,21 @@ export default function App() {
   const actions = {
     createPosting: async (data, onDone) => {
       const posting = { id: uid(), status: 'available', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), ...data };
-      await mutatePostings(list => [...list, posting]);
+      const result = await mutatePostings(list => [...list, posting]);
+      if (!result.ok) return;
       showToast('הפרסום נוצר ונשמר');
       onDone && onDone(posting.id);
     },
 
     setCoordState: async (postingId, coordState) => {
-      await mutatePostings(list => list.map(p => p.id === postingId ? { ...p, coordState, updatedAt: new Date().toISOString() } : p));
+      const result = await mutatePostings(list => list.map(p => p.id === postingId ? { ...p, coordState, updatedAt: new Date().toISOString() } : p));
+      if (!result.ok) return;
       showToast('סטטוס התיאום עודכן');
     },
 
     setPostingStatus: async (postingId, status) => {
-      await mutatePostings(list => list.map(p => p.id === postingId ? { ...p, status, updatedAt: new Date().toISOString() } : p));
+      const result = await mutatePostings(list => list.map(p => p.id === postingId ? { ...p, status, updatedAt: new Date().toISOString() } : p));
+      if (!result.ok) return;
       showToast('הסטטוס עודכן');
     },
 
@@ -1991,22 +2010,25 @@ export default function App() {
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
-      await mutateCoords(list => [...list, coord]);
+      const coordResult = await mutateCoords(list => [...list, coord]);
+      if (!coordResult.ok) return;
 
       // מעבר אוטומטי עם קבלת בקשה: פנוי -> ממתין לאישור, פתוח לתיאום -> בתהליך תיאום
-      await mutatePostings(list => list.map(p => {
+      const postResult = await mutatePostings(list => list.map(p => {
         if (p.id !== posting.id) return p;
         const patch = {};
         if (p.status === 'available') patch.status = 'pending_approval';
         if (postingCoordState(p) === 'open') patch.coordState = 'in_process';
         return Object.keys(patch).length ? { ...p, ...patch, updatedAt: new Date().toISOString() } : p;
       }));
+      if (!postResult.ok) return;
       showToast('בקשת התיאום נשלחה ונשמרה');
     },
 
     updateCoordinationStage: async (coordId, stageKey) => {
-      const nextCoords = await mutateCoords(list => list.map(c => c.id === coordId ? { ...c, coordinationStatus: stageKey, updatedAt: new Date().toISOString() } : c));
-      const coord = nextCoords.find(c => c.id === coordId);
+      const coordResult = await mutateCoords(list => list.map(c => c.id === coordId ? { ...c, coordinationStatus: stageKey, updatedAt: new Date().toISOString() } : c));
+      if (!coordResult.ok) return;
+      const coord = coordResult.value.find(c => c.id === coordId);
 
       // אוטומציה דו-כיוונית של הסטטוסים לפי השלב:
       //   שלב 1 (תיאום ראשוני)       -> "בתהליך תיאום"  + ממתין לאישור
@@ -2016,7 +2038,7 @@ export default function App() {
         const sIdx = stageIndex(stageKey);
         const newCoordState = sIdx >= 1 ? 'done' : 'in_process';
         const newStatus = sIdx >= 1 ? 'in_coordination' : 'pending_approval';
-        await mutatePostings(list => list.map(p => {
+        const postResult = await mutatePostings(list => list.map(p => {
           if (p.id !== coord.postId) return p;
           const patch = {};
           if (postingCoordState(p) !== newCoordState) patch.coordState = newCoordState;
@@ -2026,30 +2048,34 @@ export default function App() {
           }
           return Object.keys(patch).length ? { ...p, ...patch, updatedAt: new Date().toISOString() } : p;
         }));
+        if (!postResult.ok) return;
       }
       showToast('שלב התיאום עודכן');
     },
 
     updateCoordinationRequestStatus: async (coordId, requestStatus) => {
-      const nextCoords = await mutateCoords(list => list.map(c => c.id === coordId ? { ...c, requestStatus, updatedAt: new Date().toISOString() } : c));
+      const coordResult = await mutateCoords(list => list.map(c => c.id === coordId ? { ...c, requestStatus, updatedAt: new Date().toISOString() } : c));
+      if (!coordResult.ok) return;
+      const nextCoords = coordResult.value;
       const coord = nextCoords.find(c => c.id === coordId);
       if (coord) {
         const stillActive = nextCoords.some(c => c.postId === coord.postId && c.requestStatus === 'active');
         if (!stillActive) {
-          await mutatePostings(list => list.map(p => {
+          const postResult = await mutatePostings(list => list.map(p => {
             if (p.id !== coord.postId) return p;
             if (p.status === 'pending_approval' || p.status === 'in_coordination') {
               return { ...p, status: 'available', coordState: 'open', updatedAt: new Date().toISOString() };
             }
             return p;
           }));
+          if (!postResult.ok) return;
         }
       }
       showToast('סטטוס התיאום עודכן');
     },
 
     updateExecutionStatus: async (coordId, execStatus, cancellationReason) => {
-      await mutateCoords(list => list.map(c => {
+      const result = await mutateCoords(list => list.map(c => {
         if (c.id !== coordId) return c;
         return {
           ...c,
@@ -2059,6 +2085,7 @@ export default function App() {
           updatedAt: new Date().toISOString(),
         };
       }));
+      if (!result.ok) return;
       showToast('סטטוס הביצוע עודכן');
     },
   };
@@ -2097,15 +2124,16 @@ export default function App() {
           <div className="bg-amber-500 text-white text-xs font-bold px-4 py-2.5 flex items-start gap-2">
             <AlertTriangle size={15} className="shrink-0 mt-0.5" />
             <span>
-              מצב תצוגה מקדימה — הנתונים לא נשמרים לשיתוף.
-              יש לפתוח את המערכת דרך הקישור המפורסם (Publish) כדי שכל המשתמשים יראו את אותם הנתונים.
+              מסד הנתונים המשותף (Vercel KV) לא זמין — הנתונים לא נשמרים לשיתוף.
+              יש לוודא שה-KV מחובר לפרויקט ב-Vercel ושמשתני הסביבה שלו מוגדרים.
+              {lastError && <> שגיאה: {lastError}</>}
             </span>
           </div>
         )}
         {storageState === 'error' && (
           <div className="bg-rose-500 text-white text-xs font-bold px-4 py-2.5 flex items-center gap-2">
             <AlertTriangle size={15} className="shrink-0" />
-            שגיאת שמירה — בדקו את החיבור לאינטרנט
+            <span>שגיאת שמירה: {lastError || 'שגיאה לא ידועה בשרת'}</span>
           </div>
         )}
 
