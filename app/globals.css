@@ -1,0 +1,16 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700;800&family=Rubik:wght@600;700;800&display=swap');
+
+html, body {
+  margin: 0;
+  padding: 0;
+  font-family: 'Heebo', system-ui, sans-serif;
+  background-color: #f8fafc;
+}
+
+h1, h2, h3 {
+  font-family: 'Rubik', 'Heebo', system-ui, sans-serif;
+}
