@@ -1648,6 +1648,120 @@ function csvEscape(v) {
   return `"${s.replace(/"/g, '""')}"`;
 }
 
+// הורדת קובץ בדפדפן בלבד — קריאה בלבד, לא נוגעת בנתונים במסד המשותף.
+function downloadBlob(content, filename, mime) {
+  const blob = new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+// ייצוא מלא לקובץ CSV (נפתח היטב באקסל) — כולל כל הפרסומים (מסוקים + כוחות קרקע) וכל בקשות התיאום.
+function exportFullCsv(postings, coordRequests) {
+  const now = new Date();
+  const lines = [];
+  lines.push(csvEscape(`ייצוא נתונים — הופק בתאריך ${fmtDateTime(now)}`));
+  lines.push('');
+
+  lines.push(csvEscape('פרסומי אימונים (מסוקים וכוחות קרקע)'));
+  const postingHeaders = [
+    'מזהה', 'סוג', 'סטטוס', 'מצב תיאום', 'טייסת', 'סוג טייסת', 'חטיבה', 'שם כוח/יחידה',
+    'מרחב', 'אזורים', 'חלונות אימון (תאריך ושעות)', 'סוג אימון', 'סוג סיוע מבוקש',
+    'תיאור', 'הערות', 'איש קשר', 'טלפון', 'תאריך יצירה', 'עודכן לאחרונה',
+  ];
+  lines.push(postingHeaders.map(csvEscape).join(','));
+  postings.forEach(p => {
+    const windows = postingWindows(p)
+      .map(w => `${fmtDate(w.date)} ${w.startTime || '--:--'}-${w.endTime || '--:--'}`)
+      .join(' | ');
+    lines.push([
+      p.id, p.type === 'helicopter' ? 'מסוקים' : 'כוח קרקעי',
+      POSTING_STATUS[p.status]?.label || p.status || '—',
+      COORD_STATE[postingCoordState(p)]?.label || '—',
+      p.squadronNumber || '—', p.squadronNumber ? (SQUADRON_TYPE_LABEL[squadronType(p.squadronNumber)] || '—') : '—',
+      p.brigade || '—', p.unitName || '—',
+      postingSpace(p), postingAreas(p).join(' | ') || '—',
+      windows || '—',
+      p.trainingType || '—', p.airSupportType || '—',
+      p.description || '—', p.notes || '—',
+      p.contactName || '—', p.contactPhone || '—',
+      fmtDateTime(p.createdAt), fmtDateTime(p.updatedAt),
+    ].map(csvEscape).join(','));
+  });
+
+  lines.push('');
+  lines.push(csvEscape('בקשות תיאום'));
+  const coordHeaders = [
+    'מזהה', 'מזהה פרסום', 'סוג פרסום', 'נשלח ע"י', 'טייסת', 'סוג טייסת', 'חטיבה', 'שם כוח/יחידה',
+    'מרחב', 'אזורים', 'תאריך אימון', 'סוג אימון', 'סוג סיוע מבוקש',
+    'שלב תיאום', 'סטטוס בקשה', 'סטטוס ביצוע', 'הודעה', 'סיבת ביטול',
+    'איש קשר', 'טלפון', 'תאריך יצירה', 'תאריך השלמה/ביטול', 'עודכן לאחרונה',
+  ];
+  lines.push(coordHeaders.map(csvEscape).join(','));
+  coordRequests.forEach(r => {
+    lines.push([
+      r.id, r.postId, r.postType === 'helicopter' ? 'מסוקים' : 'כוח קרקעי',
+      r.requestedByType === 'helicopter' ? 'טייסת' : 'כוח קרקעי',
+      r.squadronNumber || '—', r.squadronType ? (SQUADRON_TYPE_LABEL[r.squadronType] || '—') : '—',
+      r.brigade || '—', r.unitName || '—',
+      r.space || '—', (r.areas || []).join(' | ') || '—',
+      fmtDate(r.trainingDate), r.trainingType || '—', r.airSupportType || '—',
+      COORD_STAGES.find(s => s.key === r.coordinationStatus)?.label || r.coordinationStatus || '—',
+      REQUEST_STATUS_LABEL[r.requestStatus] || r.requestStatus || '—',
+      EXEC_STATUS[r.trainingExecutionStatus]?.label || r.trainingExecutionStatus || '—',
+      r.message || '—', r.cancellationReason || '—',
+      r.contactName || '—', r.contactPhone || '—',
+      fmtDateTime(r.createdAt), fmtDateTime(r.completedAt), fmtDateTime(r.updatedAt),
+    ].map(csvEscape).join(','));
+  });
+
+  downloadBlob('﻿' + lines.join('\n'), `גיבוי-נתונים-${now.toISOString().slice(0, 10)}.csv`, 'text/csv;charset=utf-8;');
+}
+
+// גיבוי מלא ב-JSON — כל השדות כפי שהם נשמרים במסד, בלי אובדן מידע. לקריאה/גיבוי בלבד.
+function exportJsonBackup(postings, coordRequests) {
+  const now = new Date();
+  const backup = {
+    exportedAt: now.toISOString(),
+    exportedAtLabel: fmtDateTime(now),
+    appVersion: APP_VERSION,
+    postings,
+    coordRequests,
+  };
+  downloadBlob(JSON.stringify(backup, null, 2), `גיבוי-מלא-${now.toISOString().slice(0, 10)}.json`, 'application/json;charset=utf-8;');
+}
+
+function ExportPanel({ postings, coordRequests }) {
+  const [now, setNow] = useState(new Date());
+  useEffect(() => {
+    const t = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  return (
+    <div className="bg-white rounded-2xl border border-slate-200 p-4 mb-4">
+      <h4 className="font-bold text-slate-800 mb-1 text-sm">גיבוי וייצוא נתונים</h4>
+      <p className="text-xs text-slate-500 mb-3">תאריך ושעת ייצוא: {fmtDateTime(now)}</p>
+      <div className="space-y-2">
+        <button
+          onClick={() => exportFullCsv(postings, coordRequests)}
+          className="w-full bg-slate-900 text-white font-bold py-3 rounded-xl flex items-center justify-center gap-2 active:scale-[0.98] transition"
+        >
+          <Download size={16} /> ייצוא נתונים ל-CSV / Excel ({postings.length} פרסומים, {coordRequests.length} בקשות תיאום)
+        </button>
+        <button
+          onClick={() => exportJsonBackup(postings, coordRequests)}
+          className="w-full border-2 border-slate-900 text-slate-900 font-bold py-3 rounded-xl flex items-center justify-center gap-2 active:scale-[0.98] transition"
+        >
+          <Download size={16} /> גיבוי מלא (JSON) — כל השדות ללא אובדן מידע
+        </button>
+      </div>
+      <p className="text-[11px] text-slate-400 mt-2">הייצוא לקריאה בלבד — לא משנה ולא מוחק נתונים.</p>
+    </div>
+  );
+}
+
 function exportCsv(rows) {
   const headers = ['תאריך אימון', 'סוג פרסום', 'טייסת', 'חטיבה', 'כוח', 'אזורים', 'סוג אימון', 'סוג סיוע מבוקש', 'סטטוס תיאום', 'סטטוס ביצוע', 'איש קשר', 'תאריך יצירה', 'תאריך השלמה/ביטול'];
   const lines = [headers.map(csvEscape).join(',')];
@@ -1755,6 +1869,8 @@ function AnalyticsScreen({ postings, coordRequests, onBack }) {
     <div className="pb-10">
       <Header title="נתונים וסטטיסטיקות" onBack={onBack} />
       <div className="px-4 pt-4">
+        <ExportPanel postings={postings} coordRequests={coordRequests} />
+
         <button onClick={() => setShowFilters(s => !s)} className="mb-3 flex items-center gap-1.5 text-sm font-semibold text-slate-600">
           <Filter size={15} /> פילטרים {showFilters ? <ChevronDown size={15} /> : <ChevronLeft size={15} />}
         </button>
@@ -1846,7 +1962,7 @@ function AnalyticsScreen({ postings, coordRequests, onBack }) {
         <BreakdownTable title="לפי סוג סיוע מבוקש" rows={byAirSupport} />
 
         <button onClick={() => exportCsv(filtered)} className="w-full bg-slate-900 text-white font-bold py-3.5 rounded-2xl flex items-center justify-center gap-2 active:scale-[0.98] transition">
-          <Download size={18} /> ייצוא ל-CSV ({filtered.length} שורות)
+          <Download size={18} /> ייצוא בקשות תיאום מסוננות ל-CSV ({filtered.length} שורות)
         </button>
       </div>
     </div>
