@@ -10,6 +10,41 @@ function kvHostFingerprint() {
 export async function GET() {
   try {
     const data = await kv.get('postings');
+
+    // אבחון גולמי: קריאה ישירה ל-REST API של Upstash, בעקיפין מ-@vercel/kv,
+    // כדי לבודד אם חוסר-העקביות שראינו הוא בפענוח של הספרייה או בתשובה
+    // עצמה מהשרת. לא נוגע בלוגיקת התגובה של ה-route (data || [] נשאר כפי שהיה).
+    let raw = 'not-fetched';
+    try {
+      const rawRes = await fetch(`${process.env.KV_REST_API_URL}/get/postings`, {
+        headers: { Authorization: `Bearer ${process.env.KV_REST_API_TOKEN}` },
+        cache: 'no-store',
+      });
+      const rawJson = await rawRes.json();
+      let rawParsedIsArray = null;
+      let rawParsedCount = null;
+      let rawParseError = null;
+      if (typeof rawJson.result === 'string') {
+        try {
+          const parsed = JSON.parse(rawJson.result);
+          rawParsedIsArray = Array.isArray(parsed);
+          rawParsedCount = Array.isArray(parsed) ? parsed.length : null;
+        } catch (parseErr) {
+          rawParseError = String(parseErr?.message || parseErr);
+        }
+      }
+      raw = {
+        status: rawRes.status,
+        resultIsNull: rawJson.result === null,
+        resultLength: typeof rawJson.result === 'string' ? rawJson.result.length : null,
+        rawParsedIsArray,
+        rawParsedCount,
+        rawParseError,
+      };
+    } catch (rawErr) {
+      raw = { error: String(rawErr?.message || rawErr) };
+    }
+
     console.log('[DIAG]', {
       fn: 'GET', ts: new Date().toISOString(),
       region: process.env.VERCEL_REGION,
@@ -17,6 +52,11 @@ export async function GET() {
       type: typeof data,
       isArray: Array.isArray(data),
       count: Array.isArray(data) ? data.length : null,
+      dataIsNull: data === null,
+      objectTag: Object.prototype.toString.call(data),
+      ctorName: data?.constructor?.name ?? null,
+      jsonLen: (() => { try { return JSON.stringify(data)?.length ?? null; } catch { return 'unstringifiable'; } })(),
+      raw,
     });
     return NextResponse.json({ value: data || [] });
   } catch (e) {
