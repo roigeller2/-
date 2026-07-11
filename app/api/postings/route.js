@@ -1,7 +1,18 @@
-import { kv } from '@vercel/kv';
+import { Redis } from '@upstash/redis';
 import { NextResponse } from 'next/server';
 
 export const dynamic = 'force-dynamic';
+
+// לקוח Upstash ישיר, מאותחל במפורש כדי לעקוף את שתי ההגדרות של @vercel/kv
+// שחשדנו בהן: cache: 'no-store' (במקום 'default' ש-@vercel/kv כופה, מה שגרם
+// לקריאות מקוֹשות שהחזירו null ישן), ו-enableAutoPipelining: false. אותו מפתח
+// ('postings') ואותו פורמט אחסון בדיוק — אין שינוי בנתונים הקיימים.
+const redis = new Redis({
+  url: process.env.KV_REST_API_URL,
+  token: process.env.KV_REST_API_TOKEN,
+  cache: 'no-store',
+  enableAutoPipelining: false,
+});
 
 function kvHostFingerprint() {
   try { return new URL(process.env.KV_REST_API_URL).hostname; } catch { return null; }
@@ -9,11 +20,11 @@ function kvHostFingerprint() {
 
 export async function GET() {
   try {
-    const data = await kv.get('postings');
+    const data = await redis.get('postings');
 
-    // אבחון גולמי: קריאה ישירה ל-REST API של Upstash, בעקיפין מ-@vercel/kv,
-    // כדי לבודד אם חוסר-העקביות שראינו הוא בפענוח של הספרייה או בתשובה
-    // עצמה מהשרת. לא נוגע בלוגיקת התגובה של ה-route (data || [] נשאר כפי שהיה).
+    // אבחון זמני: משווים את התוצאה הראשית (עכשיו מ-@upstash/redis הישיר עם
+    // no-store) מול קריאת REST גולמית לחלוטין, כדי לוודא שהריצוד ל-null נעלם.
+    // לוג metadata בלבד — בלי תוכן נתונים ובלי Token.
     let raw = 'not-fetched';
     try {
       const rawRes = await fetch(`${process.env.KV_REST_API_URL}/get/postings`, {
@@ -47,6 +58,7 @@ export async function GET() {
 
     console.log('[DIAG]', {
       fn: 'GET', ts: new Date().toISOString(),
+      source: '@upstash/redis direct (no-store, no-pipeline)',
       region: process.env.VERCEL_REGION,
       kvHost: kvHostFingerprint(),
       type: typeof data,
@@ -68,9 +80,10 @@ export async function GET() {
 export async function PUT(request) {
   try {
     const body = await request.json();
-    await kv.set('postings', body);
+    await redis.set('postings', body);
     console.log('[DIAG]', {
       fn: 'PUT', ts: new Date().toISOString(),
+      source: '@upstash/redis direct (no-store, no-pipeline)',
       region: process.env.VERCEL_REGION,
       kvHost: kvHostFingerprint(),
       itemsWritten: Array.isArray(body) ? body.length : null,
