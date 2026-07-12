@@ -36,7 +36,7 @@ function HeliIcon({ size = 16, className = '' }) {
 
 /* ============================== קבועים ============================== */
 
-const APP_VERSION = 'Vercel · גרסה 9 💰';
+const APP_VERSION = 'Vercel · גרסה 10 💰';
 
 const REGION = 'איו״ש';
 
