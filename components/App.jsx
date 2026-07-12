@@ -189,27 +189,44 @@ async function loadCollection(key) {
       throw new Error(data.error || `שגיאת שרת (קוד ${res.status})`);
     }
     const data = await res.json();
-    return Array.isArray(data.value) ? data.value : [];
+    return {
+      items: Array.isArray(data.value) ? data.value : [],
+      rev: typeof data.rev === 'number' ? data.rev : 0,
+    };
   } catch (e) {
     console.error(`[loadCollection] קריאת "${key}" נכשלה:`, e);
     throw e;
   }
 }
 
-async function saveCollection(key, value) {
+// שמירה עם Optimistic Concurrency Control: השרת מקבל את ה-revision שהלקוח
+// קרא (expectedRev) ומבצע כתיבה אטומית (Lua CAS) רק אם אף אחד אחר לא כתב
+// בינתיים. אם מישהו אחר כן כתב — מוחזר conflict:true עם הנתונים והרביזיה
+// העדכניים, ואנחנו לא דורסים אותם.
+async function saveCollection(key, items, expectedRev) {
   try {
     const res = await fetch(API_PATH[key], {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(value),
+      body: JSON.stringify({ items, expectedRev }),
     });
     const data = await res.json().catch(() => ({}));
+    if (res.status === 409 || data.conflict) {
+      console.error(`[saveCollection] קונפליקט גרסה ב-"${key}": expectedRev=${expectedRev}, rev בפועל=${data.rev}`);
+      return {
+        ok: false,
+        conflict: true,
+        items: Array.isArray(data.value) ? data.value : [],
+        rev: typeof data.rev === 'number' ? data.rev : expectedRev,
+        error: data.error || 'הנתונים השתנו במכשיר אחר',
+      };
+    }
     if (!res.ok) {
       const error = data.error || `שגיאת שרת (קוד ${res.status})`;
       console.error('storage save error', error);
       return { ok: false, error };
     }
-    return { ok: true };
+    return { ok: true, rev: typeof data.rev === 'number' ? data.rev : expectedRev + 1 };
   } catch (e) {
     console.error('storage save error', e);
     return { ok: false, error: e?.message || String(e) };
@@ -1991,6 +2008,8 @@ export default function App() {
 
   const postingsRef = useRef([]);
   const coordsRef = useRef([]);
+  const postingsRevRef = useRef(0);
+  const coordsRevRef = useRef(0);
   useEffect(() => { postingsRef.current = postings; }, [postings]);
   useEffect(() => { coordsRef.current = coordRequests; }, [coordRequests]);
 
@@ -2008,8 +2027,10 @@ export default function App() {
       console.error('[refreshFromStorage] הסנכרון נכשל, הנתונים המקומיים נשארים ללא שינוי:', e);
       return;
     }
-    const mergedP = mergeById(postingsRef.current, remoteP);
-    const mergedC = mergeById(coordsRef.current, remoteC);
+    postingsRevRef.current = remoteP.rev;
+    coordsRevRef.current = remoteC.rev;
+    const mergedP = mergeById(postingsRef.current, remoteP.items);
+    const mergedC = mergeById(coordsRef.current, remoteC.items);
     if (JSON.stringify(mergedP) !== JSON.stringify(postingsRef.current)) setPostings(mergedP);
     if (JSON.stringify(mergedC) !== JSON.stringify(coordsRef.current)) setCoordRequests(mergedC);
     setLastSync(new Date());
@@ -2042,7 +2063,7 @@ export default function App() {
 
   /* ---------- כתיבה בטוחה: קרא-מזג-כתוב ---------- */
 
-  const mutateCollection = useCallback(async (key, ref, setState, mutator) => {
+  const mutateCollection = useCallback(async (key, ref, revRef, setState, mutator) => {
     // קריאה-לפני-כתיבה: אם לא ניתן לקרוא את הנתונים העדכניים מהשרת, עוצרים
     // כאן ולא שולחים PUT בכלל — כתיבה על בסיס מידע חלקי/ריק עלולה לדרוס
     // בטעות נתונים אמיתיים שכבר קיימים במסד המשותף.
@@ -2056,11 +2077,23 @@ export default function App() {
       showToast('השמירה בוטלה כדי להגן על הנתונים — לא ניתן היה לקרוא את המידע העדכני מהשרת. נסו שוב.');
       return { ok: false, value: ref.current };
     }
-    const merged = mergeById(ref.current, remote);
+    revRef.current = remote.rev;
+    const merged = mergeById(ref.current, remote.items);
     const next = mutator(merged);
     setState(next);
     ref.current = next;
-    const result = await saveCollection(key, next);
+    const result = await saveCollection(key, next, remote.rev);
+    if (result.conflict) {
+      // מישהו אחר כתב בין הקריאה שלנו לכתיבה שלנו — לא דורסים את מה שהוא כתב.
+      // מאמצים את הנתונים העדכניים מהשרת ומבקשים מהמשתמש לנסות את הפעולה שוב.
+      setState(result.items);
+      ref.current = result.items;
+      revRef.current = result.rev;
+      setStorageState(s => s === 'unavailable' ? s : 'error');
+      setLastError(result.error || '');
+      showToast('הנתונים השתנו במכשיר אחר בזמן השמירה — הפעולה לא בוצעה. נסו שוב.');
+      return { ok: false, conflict: true, value: result.items };
+    }
     if (!result.ok) {
       // השמירה בפועל נכשלה — מבטלים את העדכון האופטימי כדי שהממשק לא יראה
       // כאילו הרשומה נשמרה, בזמן שהיא קיימת רק בזיכרון המקומי.
@@ -2071,14 +2104,15 @@ export default function App() {
       showToast(`שגיאת שמירה: ${result.error || 'שגיאה לא ידועה בשרת'}`);
       return { ok: false, value: merged };
     }
+    revRef.current = result.rev;
     setStorageState(s => s === 'unavailable' ? s : 'ok');
     setLastError('');
     setLastSync(new Date());
     return { ok: true, value: next };
   }, []);
 
-  const mutatePostings = (mutator) => mutateCollection(KEY_POSTINGS, postingsRef, setPostings, mutator);
-  const mutateCoords = (mutator) => mutateCollection(KEY_COORDS, coordsRef, setCoordRequests, mutator);
+  const mutatePostings = (mutator) => mutateCollection(KEY_POSTINGS, postingsRef, postingsRevRef, setPostings, mutator);
+  const mutateCoords = (mutator) => mutateCollection(KEY_COORDS, coordsRef, coordsRevRef, setCoordRequests, mutator);
 
   /* ---------- ניווט ---------- */
 
@@ -2161,7 +2195,14 @@ export default function App() {
         if (postingCoordState(p) === 'open') patch.coordState = 'in_process';
         return Object.keys(patch).length ? { ...p, ...patch, updatedAt: new Date().toISOString() } : p;
       }));
-      if (!postResult.ok) return;
+      if (!postResult.ok) {
+        // הכתיבה הראשונה (הבקשה) הצליחה אך השנייה (סטטוס הפרסום) נכשלה —
+        // מצב חלקי. לא מבצעים rollback (מסוכן), אלא מיישרים את התצוגה עם
+        // המצב האמיתי בשרת ומיידעים את המשתמש.
+        showToast('בקשת התיאום נשמרה, אך עדכון סטטוס הפרסום לא הושלם. רעננו ונסו שוב.');
+        await refreshFromStorage();
+        return;
+      }
       showToast('בקשת התיאום נשלחה ונשמרה');
     },
 
@@ -2188,7 +2229,12 @@ export default function App() {
           }
           return Object.keys(patch).length ? { ...p, ...patch, updatedAt: new Date().toISOString() } : p;
         }));
-        if (!postResult.ok) return;
+        if (!postResult.ok) {
+          // שלב התיאום נשמר אך סנכרון סטטוס הפרסום נכשל — מצב חלקי.
+          showToast('שלב התיאום עודכן, אך עדכון סטטוס הפרסום לא הושלם. רעננו ונסו שוב.');
+          await refreshFromStorage();
+          return;
+        }
       }
       showToast('שלב התיאום עודכן');
     },
@@ -2208,7 +2254,12 @@ export default function App() {
             }
             return p;
           }));
-          if (!postResult.ok) return;
+          if (!postResult.ok) {
+            // סטטוס הבקשה עודכן אך שחרור סטטוס הפרסום נכשל — מצב חלקי.
+            showToast('סטטוס הבקשה עודכן, אך עדכון סטטוס הפרסום לא הושלם. רעננו ונסו שוב.');
+            await refreshFromStorage();
+            return;
+          }
         }
       }
       showToast('סטטוס התיאום עודכן');
