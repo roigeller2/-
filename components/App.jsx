@@ -116,8 +116,10 @@ const waPhone = (raw) => {
   if (d.startsWith('0')) d = '972' + d.slice(1);
   return d;
 };
-const buildWhatsAppUrl = (posting) => {
-  const phone = waPhone(posting.contactPhone);
+const buildWhatsAppUrl = (posting, request = null) => {
+  // המספר תמיד של הצד הקרקעי: אם הועברה בקשה מפורשת (תרחיש הטייסת, שלב 2) —
+  // מהבקשה; אחרת (תרחיש הכוח שפרסם) — מהפרסום עצמו.
+  const phone = waPhone(request ? request.contactPhone : posting.contactPhone);
   if (!phone) return null;
   const w = postingWindows(posting)[0] || {};
   const dateStr = fmtDate(w.date || posting.date);
@@ -867,8 +869,10 @@ function CoordinationModal({ posting, onClose, onSubmit }) {
   const [error, setError] = useState('');
 
   const handleSubmit = () => {
-    if (!contactName.trim() || !contactPhone.trim()) {
-      setError('נא למלא שם איש קשר וטלפון');
+    // טלפון נדרש רק מכוח קרקעי (isTargetHeli = הפרסום של טייסת ⇐ הפונה הוא כוח).
+    // טייס (isTargetHeli=false) אינו מזין טלפון — הוא זה שיוזם קשר בהמשך.
+    if (!contactName.trim() || (isTargetHeli && !contactPhone.trim())) {
+      setError(isTargetHeli ? 'נא למלא שם איש קשר וטלפון' : 'נא למלא שם איש קשר');
       return;
     }
     if (isTargetHeli && !unitName.trim()) {
@@ -881,7 +885,7 @@ function CoordinationModal({ posting, onClose, onSubmit }) {
       brigade: isTargetHeli ? brigade : undefined,
       unitName: isTargetHeli ? unitName.trim() : undefined,
       contactName: contactName.trim(),
-      contactPhone: contactPhone.trim(),
+      contactPhone: isTargetHeli ? contactPhone.trim() : '',
       message: message.trim(),
     });
   };
@@ -916,15 +920,17 @@ function CoordinationModal({ posting, onClose, onSubmit }) {
           </div>
         )}
 
-        <div className="grid grid-cols-2 gap-2 mb-3">
+        <div className={`grid ${isTargetHeli ? 'grid-cols-2' : 'grid-cols-1'} gap-2 mb-3`}>
           <div>
             <FieldLabel required>איש קשר</FieldLabel>
             <input value={contactName} onChange={e => setContactName(e.target.value)} className={inputCls} />
           </div>
-          <div>
-            <FieldLabel required>טלפון</FieldLabel>
-            <input value={contactPhone} onChange={e => setContactPhone(e.target.value)} type="tel" className={inputCls} />
-          </div>
+          {isTargetHeli && (
+            <div>
+              <FieldLabel required>טלפון</FieldLabel>
+              <input value={contactPhone} onChange={e => setContactPhone(e.target.value)} type="tel" className={inputCls} />
+            </div>
+          )}
         </div>
 
         <div className="mb-4">
@@ -937,7 +943,7 @@ function CoordinationModal({ posting, onClose, onSubmit }) {
         <button onClick={handleSubmit}
           className={`w-full text-white font-bold py-3 rounded-xl active:scale-[0.98] transition ${isTargetHeli ? 'bg-sky-600' : ''}`}
           style={isTargetHeli ? undefined : { backgroundColor: '#556b2f' }}>
-          שליחת בקשה ומעבר לוואטסאפ
+          {isTargetHeli ? 'שליחת בקשה' : 'שליחת בקשה ומעבר לוואטסאפ'}
         </button>
       </div>
     </div>
@@ -963,6 +969,7 @@ function PostingDetailScreen({ postingId, postings, coordRequests, onBack, go, a
   const [showModal, setShowModal] = useState(false);
   const [statusOpen, setStatusOpen] = useState(false);
   const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
   const posting = postings.find(p => p.id === postingId);
 
   if (!posting) {
@@ -984,13 +991,21 @@ function PostingDetailScreen({ postingId, postings, coordRequests, onBack, go, a
 
   const handleOpenCoordination = (data) => {
     setError('');
+    setSuccess('');
     if (isHeli && activeCoord) {
       setError('כבר נפתח תיאום עם כוח אחר בינתיים');
       return;
     }
-    // פתיחת וואטסאפ עם הודעה מוכנה מראש (בתוך מחוות הלחיצה, לפני פעולה אסינכרונית)
-    const waUrl = buildWhatsAppUrl(posting);
-    if (waUrl) window.open(waUrl, '_blank', 'noopener');
+    // תרחיש 2 (כוח פרסם, טייסת שולחת בקשה): הטייס יוזם קשר — נפתח וואטסאפ אל הכוח
+    // (בתוך מחוות הלחיצה, לפני פעולה אסינכרונית).
+    // תרחיש 1 (טייסת פרסמה, כוח שולח בקשה): לא נפתח וואטסאפ — הטייס יוזם קשר בהמשך;
+    // מציגים הודעת הצלחה כדי שברור שזו התנהגות מכוונת ולא תקלה.
+    if (posting.type === 'ground') {
+      const waUrl = buildWhatsAppUrl(posting);
+      if (waUrl) window.open(waUrl, '_blank', 'noopener');
+    } else {
+      setSuccess('בקשת התיאום נשלחה בהצלחה. אם הטייסת תאשר את הבקשה, היא תיצור איתך קשר ב-WhatsApp.');
+    }
     actions.createCoordination(posting, data);
     setShowModal(false);
   };
@@ -1064,12 +1079,18 @@ function PostingDetailScreen({ postingId, postings, coordRequests, onBack, go, a
           {!isHeli && <InfoRow icon={Users} label="תיאור האימון" value={posting.trainingDescription} />}
           <InfoRow icon={Search} label={isHeli ? 'מה הטייסת מחפשת' : 'מה מחפשים מהמסוקים'} value={posting.description} />
           <InfoRow icon={AlertTriangle} label="הערות" value={posting.notes} />
-          <InfoRow icon={Phone} label="איש קשר" value={`${posting.contactName} · ${posting.contactPhone}`} />
+          <InfoRow icon={Phone} label="איש קשר" value={isHeli ? posting.contactName : `${posting.contactName} · ${posting.contactPhone}`} />
         </div>
 
         {error && (
           <div className="mb-3 bg-rose-50 border border-rose-200 text-rose-700 text-sm rounded-xl px-3 py-2 flex items-center gap-2">
             <AlertTriangle size={16} />{error}
+          </div>
+        )}
+
+        {success && (
+          <div className="mb-3 bg-emerald-50 border border-emerald-200 text-emerald-700 text-sm rounded-xl px-3 py-2 flex items-start gap-2">
+            <Check size={16} className="mt-0.5 shrink-0" />{success}
           </div>
         )}
 
@@ -1164,7 +1185,7 @@ function CoordinationDetailScreen({ coordId, coordRequests, postings, onBack, go
           </div>
           <InfoRow icon={Calendar} label="תאריך האימון" value={fmtDate(posting?.date)} />
           <InfoRow icon={MapPin} label="אזור" value={posting?.region} />
-          <InfoRow icon={Phone} label="איש קשר בבקשה" value={`${coord.contactName} · ${coord.contactPhone}`} />
+          <InfoRow icon={Phone} label="איש קשר בבקשה" value={coord.requestedByType === 'ground_force' ? `${coord.contactName} · ${coord.contactPhone}` : coord.contactName} />
           <InfoRow icon={AlertTriangle} label="הודעה" value={coord.message} />
         </div>
 
@@ -1294,8 +1315,9 @@ function NewPostingScreen({ initialType, onBack, actions, go }) {
 
   const submit = () => {
     setError('');
-    if (!contactName.trim() || !contactPhone.trim()) {
-      setError('נא למלא שם איש קשר וטלפון'); return;
+    // טלפון נדרש רק בפרסום כוח קרקעי; טייס אינו מזין טלפון.
+    if (!contactName.trim() || (!isHeli && !contactPhone.trim())) {
+      setError(isHeli ? 'נא למלא שם איש קשר' : 'נא למלא שם איש קשר וטלפון'); return;
     }
     if (areas.length === 0) {
       setError('נא לבחור מרחב ולפחות אזור אחד'); return;
@@ -1321,7 +1343,7 @@ function NewPostingScreen({ initialType, onBack, actions, go }) {
     const base = {
       type, space, areas, region: REGION,
       description: description.trim(), notes: notes.trim(),
-      contactName: contactName.trim(), contactPhone: contactPhone.trim(),
+      contactName: contactName.trim(), contactPhone: isHeli ? '' : contactPhone.trim(),
     };
     const posting = isHeli
       ? { ...base, squadronNumber, windows: windows.map(w => ({ ...w })) }
@@ -1437,15 +1459,17 @@ function NewPostingScreen({ initialType, onBack, actions, go }) {
           <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={2} className={inputCls} />
         </div>
 
-        <div className="grid grid-cols-2 gap-2 mb-6">
+        <div className={`grid ${isHeli ? 'grid-cols-1' : 'grid-cols-2'} gap-2 mb-6`}>
           <div>
             <FieldLabel required>איש קשר</FieldLabel>
             <input value={contactName} onChange={e => setContactName(e.target.value)} className={inputCls} />
           </div>
-          <div>
-            <FieldLabel required>טלפון</FieldLabel>
-            <input type="tel" value={contactPhone} onChange={e => setContactPhone(e.target.value)} className={inputCls} />
-          </div>
+          {!isHeli && (
+            <div>
+              <FieldLabel required>טלפון</FieldLabel>
+              <input type="tel" value={contactPhone} onChange={e => setContactPhone(e.target.value)} className={inputCls} />
+            </div>
+          )}
         </div>
 
         {error && (
@@ -1707,7 +1731,7 @@ function exportFullCsv(postings, coordRequests) {
       windows || '—',
       p.trainingType || '—', p.airSupportType || '—',
       p.description || '—', p.notes || '—',
-      p.contactName || '—', p.contactPhone || '—',
+      p.contactName || '—', p.type === 'ground' ? (p.contactPhone || '—') : '—',
       fmtDateTime(p.createdAt), fmtDateTime(p.updatedAt),
     ].map(csvEscape).join(','));
   });
@@ -1733,7 +1757,7 @@ function exportFullCsv(postings, coordRequests) {
       REQUEST_STATUS_LABEL[r.requestStatus] || r.requestStatus || '—',
       EXEC_STATUS[r.trainingExecutionStatus]?.label || r.trainingExecutionStatus || '—',
       r.message || '—', r.cancellationReason || '—',
-      r.contactName || '—', r.contactPhone || '—',
+      r.contactName || '—', r.requestedByType === 'ground_force' ? (r.contactPhone || '—') : '—',
       fmtDateTime(r.createdAt), fmtDateTime(r.completedAt), fmtDateTime(r.updatedAt),
     ].map(csvEscape).join(','));
   });
@@ -1794,7 +1818,7 @@ function exportCsv(rows) {
       r.trainingType || '—', r.airSupportType || '—',
       COORD_STAGES.find(s => s.key === r.coordinationStatus)?.label || r.coordinationStatus,
       EXEC_STATUS[r.trainingExecutionStatus]?.label || r.trainingExecutionStatus,
-      `${r.contactName} / ${r.contactPhone}`, fmtDateTime(r.createdAt),
+      r.requestedByType === 'ground_force' ? `${r.contactName} / ${r.contactPhone}` : r.contactName, fmtDateTime(r.createdAt),
       fmtDateTime(r.completedAt || (r.requestStatus !== 'active' ? r.updatedAt : ''))
     ].map(csvEscape).join(','));
   });
