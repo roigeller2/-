@@ -36,7 +36,7 @@ function HeliIcon({ size = 16, className = '' }) {
 
 /* ============================== קבועים ============================== */
 
-const APP_VERSION = 'Vercel · גרסה 10 💰';
+const APP_VERSION = 'Vercel · גרסה 11 💰';
 
 const REGION = 'איו״ש';
 
@@ -59,10 +59,13 @@ const SPACES = {
 const SPACE_NAMES = Object.keys(SPACES);
 const ALL_AREAS = [...SPACES['איו״ש'], ...SPACES['גבול ירדן']];
 
+// סטטוס אימון (שכבה 2) — נגזר בזמן קריאה מהבקשות + override ידני. ארבעה מצבים,
+// עם שפת צבעים אחידה: פנוי=ירוק, בתהליך=כתום, בוצע=כחול, בוטל=אדום.
 const COORD_STATE = {
-  open: { label: 'פתוח לתיאום', bg: 'bg-emerald-100', text: 'text-emerald-800', bar: '#10b981' },
+  open: { label: 'פנוי לתיאום', bg: 'bg-emerald-100', text: 'text-emerald-800', bar: '#10b981' },
   in_process: { label: 'בתהליך תיאום', bg: 'bg-amber-100', text: 'text-amber-800', bar: '#f59e0b' },
-  done: { label: 'סגור לתיאום', bg: 'bg-rose-100', text: 'text-rose-800', bar: '#e11d48' },
+  done: { label: 'בוצע תיאום', bg: 'bg-sky-100', text: 'text-sky-800', bar: '#0284c7' },
+  cancelled: { label: 'בוטל', bg: 'bg-rose-100', text: 'text-rose-800', bar: '#e11d48' },
 };
 
 const TRAINING_TYPES = ['תרח"ט', 'תרג"ד', 'אימון מקומי'];
@@ -82,7 +85,14 @@ const COORD_STAGES = [
   { key: 'planning_summary_done', label: 'סיכום תכנון' },
 ];
 
-const REQUEST_STATUS_LABEL = { active: 'פעיל', cancelled: 'בוטל', rejected: 'נדחה' };
+// סטטוס בקשה (שכבה 1) — ערכים חדשים. 'active' ישן ממופה בזמן קריאה ל-'pending'.
+const REQUEST_STATUS_LABEL = { pending: 'ממתינה', accepted: 'התקבלה', rejected: 'נדחתה', cancelled: 'בוטלה' };
+const REQUEST_STATUS_STYLE = {
+  pending: 'bg-amber-100 text-amber-800',
+  accepted: 'bg-emerald-100 text-emerald-800',
+  rejected: 'bg-rose-100 text-rose-800',
+  cancelled: 'bg-slate-200 text-slate-600',
+};
 
 const EXEC_STATUS = {
   pending: { label: 'טרם בוצע', bg: 'bg-slate-100', text: 'text-slate-700' },
@@ -163,6 +173,45 @@ const postingSpace = (p) => {
 const postingCoordState = (p) => p.coordState || (
   (p.status === 'in_coordination' || p.status === 'pending_approval') ? 'in_process'
   : p.status === 'completed' ? 'done' : 'open');
+
+// שדה שיוך בקשה-לאימון. השדה האמיתי הוא postId; fallback ל-postingId הגנתי בלבד.
+const coordPostId = (c) => (c && (c.postId ?? c.postingId));
+
+// נרמול אחיד של סטטוס בקשה (תאימות-בקריאה). 'active' ישן → 'pending'.
+// בשימוש בכל מקום: גזירה, תצוגה, בדיקת accepted-קיים, פילטרים, בדיקות.
+const normalizeRequestStatus = (c) => {
+  const s = c && c.requestStatus;
+  if (s === 'accepted') return 'accepted';
+  if (s === 'rejected') return 'rejected';
+  if (s === 'cancelled') return 'cancelled';
+  return 'pending'; // 'active' ישן וכל ערך לא-מוכר
+};
+
+// קיבוץ בקשות לפי אימון (למניעת O(n^2) בתצוגות רשימה).
+const groupCoordsByPost = (coordRequests) => {
+  const m = {};
+  (coordRequests || []).forEach(c => {
+    const k = coordPostId(c);
+    (m[k] || (m[k] = [])).push(c);
+  });
+  return m;
+};
+
+// גזירת סטטוס האימון בזמן קריאה. סדר קדימות: override ידני גובר; אחריו
+// תאימות-לאחור לרשומות ישנות; אחריו accepted מפורש → בתהליך; אחרת פנוי.
+// active ישן (→pending) לעולם לא גורם ל"בתהליך".
+const deriveTrainingStatus = (posting, requests) => {
+  const m = posting.manualStatus;
+  if (m === 'cancelled') return 'cancelled';
+  if (m === 'done') return 'done';
+  // תאימות-לאחור (רשומות ללא manualStatus)
+  if (posting.status === 'cancelled') return 'cancelled';
+  const anyExecCompleted = (requests || []).some(r => r.trainingExecutionStatus === 'completed');
+  if (posting.status === 'completed' || anyExecCompleted) return 'done';
+  if (posting.coordState === 'done') return 'in_process'; // done ישן בלי completed → בתהליך
+  if ((requests || []).some(r => normalizeRequestStatus(r) === 'accepted')) return 'in_process';
+  return 'open';
+};
 
 /* ============================== שכבת שמירה משותפת ============================== */
 
@@ -576,7 +625,7 @@ function BottomNav({ screen, go }) {
 
 /* ============================== כרטיס פרסום ============================== */
 
-function PostingCard({ posting, onClick }) {
+function PostingCard({ posting, onClick, coordState }) {
   const isHeli = posting.type === 'helicopter';
   const d = postingDate(posting);
   const areas = postingAreas(posting);
@@ -589,7 +638,7 @@ function PostingCard({ posting, onClick }) {
         {isHeli
           ? <SquadronTag number={posting.squadronNumber} />
           : <GroundTag unitName={posting.unitName} brigade={posting.brigade} />}
-        <CoordStateBadge state={postingCoordState(posting)} />
+        <CoordStateBadge state={coordState || postingCoordState(posting)} />
       </div>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-slate-600 mb-2">
         <span className="flex items-center gap-1"><Calendar size={14} />{fmtDate(d)}</span>
@@ -619,11 +668,13 @@ function PostingCard({ posting, onClick }) {
 function Dashboard({ postings, coordRequests, go }) {
   const heli = postings.filter(p => p.type === 'helicopter');
   const ground = postings.filter(p => p.type === 'ground');
+  const byPost = groupCoordsByPost(coordRequests);
+  const stateOf = (p) => deriveTrainingStatus(p, byPost[p.id] || []);
   const stats = {
-    heliAvailable: heli.filter(p => p.status === 'available').length,
-    groundAvailable: ground.filter(p => p.status === 'available').length,
-    inCoordination: postings.filter(p => p.status === 'in_coordination').length,
-    completed: postings.filter(p => p.status === 'completed').length,
+    heliAvailable: heli.filter(p => stateOf(p) === 'open').length,
+    groundAvailable: ground.filter(p => stateOf(p) === 'open').length,
+    inCoordination: postings.filter(p => stateOf(p) === 'in_process').length,
+    completed: postings.filter(p => stateOf(p) === 'done').length,
   };
   const recent = [...postings].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).slice(0, 5);
 
@@ -678,7 +729,7 @@ function Dashboard({ postings, coordRequests, go }) {
         ) : (
           <div className="space-y-3">
             {recent.map(p => (
-              <PostingCard key={p.id} posting={p} onClick={() => go('posting', { id: p.id })} />
+              <PostingCard key={p.id} posting={p} coordState={stateOf(p)} onClick={() => go('posting', { id: p.id })} />
             ))}
           </div>
         )}
@@ -689,7 +740,7 @@ function Dashboard({ postings, coordRequests, go }) {
 
 /* ============================== רשימת פרסומים ============================== */
 
-function PostingListScreen({ type, postings, go, onBack }) {
+function PostingListScreen({ type, postings, coordRequests, go, onBack }) {
   const [view, setView] = useState('gantt'); // ברירת מחדל: גאנט
   const [q, setQ] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -706,11 +757,13 @@ function PostingListScreen({ type, postings, go, onBack }) {
 
   const toggleSquadron = (n) => setSquadronsF(s => s.includes(n) ? s.filter(x => x !== n) : [...s, n]);
 
+  const byPost = useMemo(() => groupCoordsByPost(coordRequests), [coordRequests]);
+
   const list = useMemo(() => {
     return postings
       .filter(p => p.type === type)
       .filter(p => statusFilter === 'all' || p.status === statusFilter)
-      .filter(p => coordStateF === 'all' || postingCoordState(p) === coordStateF)
+      .filter(p => coordStateF === 'all' || deriveTrainingStatus(p, byPost[p.id] || []) === coordStateF)
       .filter(p => !dateFrom || postingDate(p) >= dateFrom)
       .filter(p => spaceF === 'all' || postingSpace(p) === spaceF)
       .filter(p => areaF === 'all' || postingAreas(p).includes(areaF))
@@ -729,7 +782,7 @@ function PostingListScreen({ type, postings, go, onBack }) {
         return hay.includes(q.toLowerCase());
       })
       .sort((a, b) => (postingDate(a) || '9999').localeCompare(postingDate(b) || '9999'));
-  }, [postings, type, statusFilter, coordStateF, dateFrom, spaceF, areaF, squadronsF, trainingTypeF, airSupportF, q]);
+  }, [postings, byPost, type, statusFilter, coordStateF, dateFrom, spaceF, areaF, squadronsF, trainingTypeF, airSupportF, q]);
 
   const isHeli = type === 'helicopter';
 
@@ -832,14 +885,14 @@ function PostingListScreen({ type, postings, go, onBack }) {
 
       {view === 'gantt' ? (
         <div className="px-4">
-          <GanttBoard items={list} type={type} go={go} />
+          <GanttBoard items={list} type={type} go={go} coordRequests={coordRequests} />
         </div>
       ) : (
         <div className="px-4 space-y-3">
           {list.length === 0 ? (
             <EmptyState icon={isHeli ? HeliIcon : Users} title="לא נמצאו פרסומים" subtitle="נסו לשנות את הסינון או פרסמו הזדמנות חדשה" />
           ) : list.map(p => (
-            <PostingCard key={p.id} posting={p} onClick={() => go('posting', { id: p.id })} />
+            <PostingCard key={p.id} posting={p} coordState={deriveTrainingStatus(p, byPost[p.id] || [])} onClick={() => go('posting', { id: p.id })} />
           ))}
         </div>
       )}
@@ -967,7 +1020,6 @@ function InfoRow({ icon: Icon, label, value }) {
 
 function PostingDetailScreen({ postingId, postings, coordRequests, onBack, go, actions }) {
   const [showModal, setShowModal] = useState(false);
-  const [statusOpen, setStatusOpen] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const posting = postings.find(p => p.id === postingId);
@@ -985,17 +1037,14 @@ function PostingDetailScreen({ postingId, postings, coordRequests, onBack, go, a
   const areas = postingAreas(posting);
   const wins = postingWindows(posting);
   const relatedCoords = coordRequests
-    .filter(c => c.postId === posting.id)
+    .filter(c => coordPostId(c) === posting.id)
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-  const activeCoord = relatedCoords.find(c => c.requestStatus === 'active');
+  const derivedState = deriveTrainingStatus(posting, relatedCoords);
+  const hasAccepted = relatedCoords.some(c => normalizeRequestStatus(c) === 'accepted');
 
   const handleOpenCoordination = (data) => {
     setError('');
     setSuccess('');
-    if (isHeli && activeCoord) {
-      setError('כבר נפתח תיאום עם כוח אחר בינתיים');
-      return;
-    }
     // תרחיש 2 (כוח פרסם, טייסת שולחת בקשה): הטייס יוזם קשר — נפתח וואטסאפ אל הכוח
     // (בתוך מחוות הלחיצה, לפני פעולה אסינכרונית).
     // תרחיש 1 (טייסת פרסמה, כוח שולח בקשה): לא נפתח וואטסאפ — הטייס יוזם קשר בהמשך;
@@ -1019,42 +1068,31 @@ function PostingDetailScreen({ postingId, postings, coordRequests, onBack, go, a
           {isHeli
             ? <SquadronTag number={posting.squadronNumber} />
             : <GroundTag unitName={posting.unitName} brigade={posting.brigade} />}
-          <div className="relative">
-            <button onClick={() => setStatusOpen(s => !s)}>
-              <CoordStateBadge state={postingCoordState(posting)} />
-            </button>
-            {statusOpen && (
-              <div className="absolute left-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-lg z-20 overflow-hidden w-44">
-                <div className="px-3 py-1.5 text-[10px] text-slate-400 font-bold bg-slate-50">סטטוס תיאום</div>
-                {Object.entries(COORD_STATE).map(([k, v]) => (
-                  <button key={k} onClick={() => { actions.setCoordState(posting.id, k); setStatusOpen(false); }}
-                    className="w-full text-right px-3 py-2 text-sm hover:bg-slate-50 flex items-center gap-2">
-                    <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: v.bar }}></span>{v.label}
-                  </button>
-                ))}
-                <div className="px-3 py-1.5 text-[10px] text-slate-400 font-bold bg-slate-50 border-t border-slate-100">סטטוס פרסום</div>
-                {Object.entries(POSTING_STATUS).map(([k, v]) => (
-                  <button key={k} onClick={() => { actions.setPostingStatus(posting.id, k); setStatusOpen(false); }}
-                    className="w-full text-right px-3 py-2 text-sm hover:bg-slate-50 flex items-center gap-2">
-                    <span className={`w-1.5 h-1.5 rounded-full ${v.dot}`}></span>{v.label}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
+          <CoordStateBadge state={derivedState} />
         </div>
 
         <div className="mb-3"><AreaChips areas={areas} space={postingSpace(posting)} /></div>
 
         <div className="bg-white rounded-2xl border border-slate-200 p-3 mb-3">
-          <div className="text-xs font-bold text-slate-500 mb-2">סטטוס תיאום</div>
+          <div className="text-xs font-bold text-slate-500 mb-1">סטטוס האימון</div>
+          <p className="text-[11px] text-slate-400 mb-2">
+            "פנוי" ו"בתהליך" נקבעים אוטומטית לפי הבקשות. ניתן לסמן ידנית שהאימון בוצע או בוטל.
+          </p>
           <div className="flex gap-2 flex-wrap">
-            {Object.entries(COORD_STATE).map(([k, v]) => (
-              <button key={k} onClick={() => actions.setCoordState(posting.id, k)}
-                className={`px-3 py-1.5 rounded-full text-xs font-bold border ${postingCoordState(posting) === k ? `${v.bg} ${v.text} border-transparent` : 'border-slate-200 text-slate-500'}`}>
-                {v.label}
+            <button onClick={() => actions.setTrainingOverride(posting.id, 'done')}
+              className={`px-3 py-1.5 rounded-full text-xs font-bold border ${posting.manualStatus === 'done' ? 'bg-sky-100 text-sky-800 border-transparent' : 'border-slate-200 text-slate-500'}`}>
+              סמן כבוצע תיאום
+            </button>
+            <button onClick={() => actions.setTrainingOverride(posting.id, 'cancelled')}
+              className={`px-3 py-1.5 rounded-full text-xs font-bold border ${posting.manualStatus === 'cancelled' ? 'bg-rose-100 text-rose-800 border-transparent' : 'border-slate-200 text-slate-500'}`}>
+              סמן כבוטל
+            </button>
+            {posting.manualStatus && (
+              <button onClick={() => actions.setTrainingOverride(posting.id, null)}
+                className="px-3 py-1.5 rounded-full text-xs font-bold border border-slate-200 text-slate-500">
+                בטל סימון
               </button>
-            ))}
+            )}
           </div>
         </div>
 
@@ -1094,46 +1132,66 @@ function PostingDetailScreen({ postingId, postings, coordRequests, onBack, go, a
           </div>
         )}
 
-        {isHeli ? (
-          activeCoord ? (
-            <button onClick={() => go('coordination', { id: activeCoord.id })} className="w-full bg-sky-50 border border-sky-200 rounded-2xl p-4 text-right mb-4">
-              <div className="text-xs text-sky-600 font-bold mb-1">בתיאום עם:</div>
-              <GroundTag unitName={activeCoord.unitName} brigade={activeCoord.brigade} />
-              <div className="flex items-center justify-between mt-3">
-                <ExecBadge status={activeCoord.trainingExecutionStatus} />
-                <span className="text-sky-700 text-sm font-semibold flex items-center gap-1">צפה בפרטי התיאום <ChevronLeft size={15} /></span>
-              </div>
-            </button>
-          ) : (
-            <button onClick={() => setShowModal(true)} className="w-full bg-sky-600 text-white font-bold py-3.5 rounded-2xl mb-4 active:scale-[0.98] transition">
-              פתח תיאום מול הטייסת
-            </button>
-          )
+        {/* יצירת בקשה חדשה — הצד השני מגיש. ריבוי בקשות ממתינות מותר. */}
+        <button onClick={() => setShowModal(true)}
+          className={`w-full text-white font-bold py-3.5 rounded-2xl mb-4 active:scale-[0.98] transition ${isHeli ? 'bg-sky-600' : ''}`}
+          style={isHeli ? undefined : { backgroundColor: '#556b2f' }}>
+          {isHeli ? 'פתח תיאום מול הטייסת' : 'טייסת? הצטרפו לאימון הזה'}
+        </button>
+
+        <h3 className="font-bold text-slate-800 mb-2">בקשות תיאום ({relatedCoords.length})</h3>
+        {relatedCoords.length === 0 ? (
+          <p className="text-sm text-slate-400 mb-4">אין עדיין בקשות תיאום לאימון הזה.</p>
         ) : (
-          <>
-            <button onClick={() => setShowModal(true)} className="w-full text-white font-bold py-3.5 rounded-2xl mb-4 active:scale-[0.98] transition" style={{ backgroundColor: '#556b2f' }}>
-              טייסת? הצטרפו לאימון הזה
-            </button>
-            <h3 className="font-bold text-slate-800 mb-2">טייסות שהצטרפו / הביעו עניין ({relatedCoords.length})</h3>
-            {relatedCoords.length === 0 ? (
-              <p className="text-sm text-slate-400 mb-4">אין עדיין פניות מטייסות — האימון פתוח לכל הטייסות</p>
-            ) : (
-              <div className="space-y-2 mb-4">
-                {relatedCoords.map(c => (
-                  <button key={c.id} onClick={() => go('coordination', { id: c.id })} className="w-full bg-white border border-slate-200 rounded-xl p-3 text-right flex items-center justify-between">
+          <div className="space-y-2 mb-4">
+            {relatedCoords.map(c => {
+              const st = normalizeRequestStatus(c);
+              const waUrl = (c.requestedByType === 'ground_force' && st !== 'rejected' && st !== 'cancelled')
+                ? buildWhatsAppUrl(posting, c) : null;
+              return (
+                <div key={c.id} className="bg-white border border-slate-200 rounded-xl p-3">
+                  <div className="flex items-start justify-between gap-2">
                     <div>
-                      <SquadronTag number={c.squadronNumber} />
-                      <div className="flex items-center gap-2 mt-1.5">
-                        <span className="text-xs text-slate-400">{REQUEST_STATUS_LABEL[c.requestStatus]}</span>
-                        <ExecBadge status={c.trainingExecutionStatus} />
+                      {c.requestedByType === 'helicopter'
+                        ? <SquadronTag number={c.squadronNumber} />
+                        : <GroundTag unitName={c.unitName} brigade={c.brigade} />}
+                      <div className="mt-1.5">
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold ${REQUEST_STATUS_STYLE[st]}`}>
+                          {REQUEST_STATUS_LABEL[st]}
+                        </span>
                       </div>
                     </div>
-                    <ChevronLeft size={16} className="text-slate-400" />
-                  </button>
-                ))}
-              </div>
-            )}
-          </>
+                    <button onClick={() => go('coordination', { id: c.id })} className="text-slate-400 flex items-center gap-1 text-xs font-semibold shrink-0">
+                      פרטים <ChevronLeft size={15} />
+                    </button>
+                  </div>
+                  <div className="flex flex-wrap gap-2 mt-3">
+                    {st === 'pending' && (
+                      <button onClick={() => actions.acceptRequest(c.id)} disabled={hasAccepted}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold ${hasAccepted ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'bg-emerald-600 text-white active:scale-[0.98]'}`}>
+                        אשר בקשה
+                      </button>
+                    )}
+                    {(st === 'pending' || st === 'accepted') && (
+                      <button onClick={() => actions.rejectRequest(c.id)}
+                        className="px-3 py-1.5 rounded-lg text-xs font-bold bg-white border border-rose-300 text-rose-600 active:scale-[0.98]">
+                        דחה
+                      </button>
+                    )}
+                    {waUrl && (
+                      <a href={waUrl} target="_blank" rel="noopener noreferrer"
+                        className="px-3 py-1.5 rounded-lg text-xs font-bold text-white active:scale-[0.98]" style={{ backgroundColor: '#16a34a' }}>
+                        WhatsApp לכוח
+                      </a>
+                    )}
+                  </div>
+                  {hasAccepted && st === 'pending' && (
+                    <p className="text-[11px] text-slate-400 mt-2">כדי לאשר בקשה זו יש קודם לדחות/לבטל את הבקשה שהתקבלה.</p>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         )}
       </div>
 
@@ -1192,11 +1250,11 @@ function CoordinationDetailScreen({ coordId, coordRequests, postings, onBack, go
         <div className="bg-white rounded-2xl border border-slate-200 p-4 mb-4">
           <div className="flex items-center justify-between mb-4">
             <h3 className="font-bold text-slate-800">התקדמות התיאום</h3>
-            <span className="text-xs text-slate-400">{REQUEST_STATUS_LABEL[coord.requestStatus]}</span>
+            <span className="text-xs text-slate-400">{REQUEST_STATUS_LABEL[normalizeRequestStatus(coord)]}</span>
           </div>
           <ProgressBar
             currentKey={coord.coordinationStatus}
-            editable={coord.requestStatus === 'active'}
+            editable={['pending', 'accepted'].includes(normalizeRequestStatus(coord))}
             onStageClick={(stage, i, isDone) => {
               const idx = stageIndex(coord.coordinationStatus);
               if (isDone) {
@@ -1246,9 +1304,9 @@ function CoordinationDetailScreen({ coordId, coordRequests, postings, onBack, go
           )}
         </div>
 
-        {coord.requestStatus === 'active' && (
+        {['pending', 'accepted'].includes(normalizeRequestStatus(coord)) && (
           <button
-            onClick={() => actions.updateCoordinationRequestStatus(coord.id, 'cancelled')}
+            onClick={() => actions.cancelRequest(coord.id)}
             className="w-full bg-white border border-rose-300 text-rose-600 font-bold py-3 rounded-2xl">
             בטל את בקשת התיאום הזו
           </button>
@@ -1584,9 +1642,9 @@ function buildCalendarEvents(items) {
   return byDate;
 }
 
-function CalendarEventCard({ p, w, go }) {
+function CalendarEventCard({ p, w, go, coordState }) {
   const isHeli = p.type === 'helicopter';
-  const color = COORD_STATE[postingCoordState(p)].bar;
+  const color = COORD_STATE[coordState || postingCoordState(p)].bar;
   const areas = postingAreas(p);
   const areaText = areas.length ? (areas.length > 1 ? areas[0] + '+' : areas[0]) : '';
   return (
@@ -1611,7 +1669,8 @@ function CalendarEventCard({ p, w, go }) {
   );
 }
 
-function CalendarGantt({ items, tr, go }) {
+function CalendarGantt({ items, tr, go, coordRequests }) {
+  const byPost = groupCoordsByPost(coordRequests);
   const events = buildCalendarEvents(items);
   const hasAny = Object.keys(events).some(iso =>
     tr.weeks.some(week => week.some(d => toISO(d) === iso))
@@ -1639,7 +1698,7 @@ function CalendarGantt({ items, tr, go }) {
                   {d.getDate()}/{d.getMonth() + 1}
                 </div>
                 {dayEvents.map((ev, i) => (
-                  <CalendarEventCard key={ev.p.id + '-' + i} p={ev.p} w={ev.w} go={go} />
+                  <CalendarEventCard key={ev.p.id + '-' + i} p={ev.p} w={ev.w} go={go} coordState={deriveTrainingStatus(ev.p, byPost[ev.p.id] || [])} />
                 ))}
               </div>
             );
@@ -1653,19 +1712,19 @@ function CalendarGantt({ items, tr, go }) {
   );
 }
 
-function GanttBoard({ items, type, go }) {
+function GanttBoard({ items, type, go, coordRequests }) {
   const tr = useCalendarRange();
   return (
     <div className="pt-1">
       <CalendarRangeControls tr={tr} />
       <GanttLegend />
-      <CalendarGantt items={items} tr={tr} go={go} />
+      <CalendarGantt items={items} tr={tr} go={go} coordRequests={coordRequests} />
       <p className="text-[11px] text-slate-400 text-center mt-2 mb-2">לחיצה על אימון פותחת את הפרסום המלא</p>
     </div>
   );
 }
 
-function TimelineScreen({ postings, go, onBack }) {
+function TimelineScreen({ postings, coordRequests, go, onBack }) {
   const tr = useCalendarRange();
   const heli = postings.filter(p => p.type === 'helicopter');
   const ground = postings.filter(p => p.type === 'ground');
@@ -1677,9 +1736,9 @@ function TimelineScreen({ postings, go, onBack }) {
         <CalendarRangeControls tr={tr} />
         <GanttLegend />
         <h3 className="font-bold text-slate-800 mb-2 flex items-center gap-1.5"><HeliIcon size={16} />אימוני מסוקים</h3>
-        <div className="mb-5"><CalendarGantt items={heli} tr={tr} go={go} /></div>
+        <div className="mb-5"><CalendarGantt items={heli} tr={tr} go={go} coordRequests={coordRequests} /></div>
         <h3 className="font-bold text-slate-800 mb-2 flex items-center gap-1.5"><Users size={16} />אימוני כוחות</h3>
-        <CalendarGantt items={ground} tr={tr} go={go} />
+        <CalendarGantt items={ground} tr={tr} go={go} coordRequests={coordRequests} />
         <p className="text-[11px] text-slate-400 text-center mt-3">לחיצה על אימון פותחת את הפרסום המלא</p>
       </div>
     </div>
@@ -1706,6 +1765,7 @@ function downloadBlob(content, filename, mime) {
 // ייצוא מלא לקובץ CSV (נפתח היטב באקסל) — כולל כל הפרסומים (מסוקים + כוחות קרקע) וכל בקשות התיאום.
 function exportFullCsv(postings, coordRequests) {
   const now = new Date();
+  const byPost = groupCoordsByPost(coordRequests);
   const lines = [];
   lines.push(csvEscape(`ייצוא נתונים — הופק בתאריך ${fmtDateTime(now)}`));
   lines.push('');
@@ -1724,7 +1784,7 @@ function exportFullCsv(postings, coordRequests) {
     lines.push([
       p.id, p.type === 'helicopter' ? 'מסוקים' : 'כוח קרקעי',
       POSTING_STATUS[p.status]?.label || p.status || '—',
-      COORD_STATE[postingCoordState(p)]?.label || '—',
+      COORD_STATE[deriveTrainingStatus(p, byPost[p.id] || [])]?.label || '—',
       p.squadronNumber || '—', p.squadronNumber ? (SQUADRON_TYPE_LABEL[squadronType(p.squadronNumber)] || '—') : '—',
       p.brigade || '—', p.unitName || '—',
       postingSpace(p), postingAreas(p).join(' | ') || '—',
@@ -1754,7 +1814,7 @@ function exportFullCsv(postings, coordRequests) {
       r.space || '—', (r.areas || []).join(' | ') || '—',
       fmtDate(r.trainingDate), r.trainingType || '—', r.airSupportType || '—',
       COORD_STAGES.find(s => s.key === r.coordinationStatus)?.label || r.coordinationStatus || '—',
-      REQUEST_STATUS_LABEL[r.requestStatus] || r.requestStatus || '—',
+      REQUEST_STATUS_LABEL[normalizeRequestStatus(r)] || '—',
       EXEC_STATUS[r.trainingExecutionStatus]?.label || r.trainingExecutionStatus || '—',
       r.message || '—', r.cancellationReason || '—',
       r.contactName || '—', r.requestedByType === 'ground_force' ? (r.contactPhone || '—') : '—',
@@ -1819,7 +1879,7 @@ function exportCsv(rows) {
       COORD_STAGES.find(s => s.key === r.coordinationStatus)?.label || r.coordinationStatus,
       EXEC_STATUS[r.trainingExecutionStatus]?.label || r.trainingExecutionStatus,
       r.requestedByType === 'ground_force' ? `${r.contactName} / ${r.contactPhone}` : r.contactName, fmtDateTime(r.createdAt),
-      fmtDateTime(r.completedAt || (r.requestStatus !== 'active' ? r.updatedAt : ''))
+      fmtDateTime(r.completedAt || (['rejected', 'cancelled'].includes(normalizeRequestStatus(r)) ? r.updatedAt : ''))
     ].map(csvEscape).join(','));
   });
   const blob = new Blob(['\uFEFF' + lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
@@ -1888,8 +1948,8 @@ function AnalyticsScreen({ postings, coordRequests, onBack }) {
     total: filtered.length,
     planningDone: filtered.filter(r => r.coordinationStatus === 'planning_summary_done').length,
     executed: filtered.filter(r => r.trainingExecutionStatus === 'completed').length,
-    open: filtered.filter(r => r.requestStatus === 'active').length,
-    cancelled: filtered.filter(r => r.requestStatus !== 'active').length,
+    open: filtered.filter(r => ['pending', 'accepted'].includes(normalizeRequestStatus(r))).length,
+    cancelled: filtered.filter(r => ['rejected', 'cancelled'].includes(normalizeRequestStatus(r))).length,
   };
 
   const groupCount = (keyFn) => {
@@ -2087,56 +2147,81 @@ export default function App() {
 
   /* ---------- כתיבה בטוחה: קרא-מזג-כתוב ---------- */
 
-  const mutateCollection = useCallback(async (key, ref, revRef, setState, mutator) => {
-    // קריאה-לפני-כתיבה: אם לא ניתן לקרוא את הנתונים העדכניים מהשרת, עוצרים
-    // כאן ולא שולחים PUT בכלל — כתיבה על בסיס מידע חלקי/ריק עלולה לדרוס
-    // בטעות נתונים אמיתיים שכבר קיימים במסד המשותף.
-    let remote;
-    try {
-      remote = await loadCollection(key);
-    } catch (e) {
-      console.error(`[mutateCollection] השמירה ל-"${key}" בוטלה — לא ניתן היה לקרוא את הנתונים הקיימים מהשרת:`, e);
-      setStorageState(s => s === 'unavailable' ? s : 'error');
-      setLastError(e?.message || String(e));
-      showToast('השמירה בוטלה כדי להגן על הנתונים — לא ניתן היה לקרוא את המידע העדכני מהשרת. נסו שוב.');
-      return { ok: false, value: ref.current };
-    }
-    revRef.current = remote.rev;
-    const merged = mergeById(ref.current, remote.items);
-    const next = mutator(merged);
-    setState(next);
-    ref.current = next;
-    const result = await saveCollection(key, next, remote.rev);
-    if (result.conflict) {
-      // מישהו אחר כתב בין הקריאה שלנו לכתיבה שלנו — לא דורסים את מה שהוא כתב.
-      // מאמצים את הנתונים העדכניים מהשרת ומבקשים מהמשתמש לנסות את הפעולה שוב.
-      setState(result.items);
-      ref.current = result.items;
+  // חוזה ה-mutator:
+  //   • מחזיר מערך  → כתיבה רגילה (כל ה-callers הקיימים ממשיכים ללא שינוי).
+  //   • מחזיר { block:true, reason } → אין PUT, ה-revision לא משתנה, ה-state
+  //     מיושר לנתונים הטריים, ומוחזר { ok:false, blocked:true, reason }.
+  // options.retryOnConflict (opt-in): על 409 מבצעים ניסיון חוזר אחד בלבד —
+  //   הניסיון החוזר מתחיל מ-loadCollection חדש, וה-mutator רץ שוב על נתונים
+  //   טריים. ברירת המחדל (false) שומרת בדיוק על מדיניות הקונפליקטים הקיימת.
+  const mutateCollection = useCallback(async (key, ref, revRef, setState, mutator, options = {}) => {
+    const maxAttempts = options.retryOnConflict ? 2 : 1;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      // קריאה-לפני-כתיבה: אם לא ניתן לקרוא את הנתונים העדכניים מהשרת, עוצרים
+      // כאן ולא שולחים PUT בכלל — כתיבה על בסיס מידע חלקי/ריק עלולה לדרוס
+      // בטעות נתונים אמיתיים שכבר קיימים במסד המשותף.
+      let remote;
+      try {
+        remote = await loadCollection(key);
+      } catch (e) {
+        console.error(`[mutateCollection] השמירה ל-"${key}" בוטלה — לא ניתן היה לקרוא את הנתונים הקיימים מהשרת:`, e);
+        setStorageState(s => s === 'unavailable' ? s : 'error');
+        setLastError(e?.message || String(e));
+        showToast('השמירה בוטלה כדי להגן על הנתונים — לא ניתן היה לקרוא את המידע העדכני מהשרת. נסו שוב.');
+        return { ok: false, value: ref.current };
+      }
+      revRef.current = remote.rev;
+      const merged = mergeById(ref.current, remote.items);
+      const out = mutator(merged);
+
+      // חסימה מפורשת: המוטטור החליט לא לכתוב (על בסיס הנתונים הטריים).
+      if (out && out.block === true) {
+        setState(merged);
+        ref.current = merged;
+        return { ok: false, blocked: true, reason: out.reason, value: merged };
+      }
+
+      const next = out;
+      setState(next);
+      ref.current = next;
+      const result = await saveCollection(key, next, remote.rev);
+      if (result.conflict) {
+        // מישהו אחר כתב בין הקריאה לכתיבה — לא דורסים אותו. מאמצים את הנתונים
+        // הטריים. אם retry מותר ונותר ניסיון — מנסים שוב על הנתונים הטריים.
+        setState(result.items);
+        ref.current = result.items;
+        revRef.current = result.rev;
+        if (attempt < maxAttempts) {
+          continue;
+        }
+        setStorageState(s => s === 'unavailable' ? s : 'error');
+        setLastError(result.error || '');
+        showToast('הנתונים השתנו במכשיר אחר בזמן השמירה — הפעולה לא בוצעה. נסו שוב.');
+        return { ok: false, conflict: true, value: result.items };
+      }
+      if (!result.ok) {
+        // השמירה בפועל נכשלה — מבטלים את העדכון האופטימי כדי שהממשק לא יראה
+        // כאילו הרשומה נשמרה, בזמן שהיא קיימת רק בזיכרון המקומי. אין retry
+        // על שגיאה שאינה 409.
+        setState(merged);
+        ref.current = merged;
+        setStorageState(s => s === 'unavailable' ? s : 'error');
+        setLastError(result.error || '');
+        showToast(`שגיאת שמירה: ${result.error || 'שגיאה לא ידועה בשרת'}`);
+        return { ok: false, value: merged };
+      }
       revRef.current = result.rev;
-      setStorageState(s => s === 'unavailable' ? s : 'error');
-      setLastError(result.error || '');
-      showToast('הנתונים השתנו במכשיר אחר בזמן השמירה — הפעולה לא בוצעה. נסו שוב.');
-      return { ok: false, conflict: true, value: result.items };
+      setStorageState(s => s === 'unavailable' ? s : 'ok');
+      setLastError('');
+      setLastSync(new Date());
+      return { ok: true, value: next };
     }
-    if (!result.ok) {
-      // השמירה בפועל נכשלה — מבטלים את העדכון האופטימי כדי שהממשק לא יראה
-      // כאילו הרשומה נשמרה, בזמן שהיא קיימת רק בזיכרון המקומי.
-      setState(merged);
-      ref.current = merged;
-      setStorageState(s => s === 'unavailable' ? s : 'error');
-      setLastError(result.error || '');
-      showToast(`שגיאת שמירה: ${result.error || 'שגיאה לא ידועה בשרת'}`);
-      return { ok: false, value: merged };
-    }
-    revRef.current = result.rev;
-    setStorageState(s => s === 'unavailable' ? s : 'ok');
-    setLastError('');
-    setLastSync(new Date());
-    return { ok: true, value: next };
+    // הגנה: לא אמור להגיע לכאן.
+    return { ok: false, conflict: true, value: ref.current };
   }, []);
 
-  const mutatePostings = (mutator) => mutateCollection(KEY_POSTINGS, postingsRef, postingsRevRef, setPostings, mutator);
-  const mutateCoords = (mutator) => mutateCollection(KEY_COORDS, coordsRef, coordsRevRef, setCoordRequests, mutator);
+  const mutatePostings = (mutator, options) => mutateCollection(KEY_POSTINGS, postingsRef, postingsRevRef, setPostings, mutator, options);
+  const mutateCoords = (mutator, options) => mutateCollection(KEY_COORDS, coordsRef, coordsRevRef, setCoordRequests, mutator, options);
 
   /* ---------- ניווט ---------- */
 
@@ -2169,16 +2254,15 @@ export default function App() {
       onDone && onDone(posting.id);
     },
 
-    setCoordState: async (postingId, coordState) => {
-      const result = await mutatePostings(list => list.map(p => p.id === postingId ? { ...p, coordState, updatedAt: new Date().toISOString() } : p));
+    // override ידני לסטטוס האימון: 'done' (בוצע) / 'cancelled' (בוטל) / null (חזרה לגזירה).
+    // גובר על הגזירה האוטומטית. כתיבה אחת בלבד.
+    setTrainingOverride: async (postingId, manualStatus) => {
+      const result = await mutatePostings(list => list.map(p => p.id === postingId
+        ? { ...p, manualStatus: manualStatus || undefined, updatedAt: new Date().toISOString() } : p));
       if (!result.ok) return;
-      showToast('סטטוס התיאום עודכן');
-    },
-
-    setPostingStatus: async (postingId, status) => {
-      const result = await mutatePostings(list => list.map(p => p.id === postingId ? { ...p, status, updatedAt: new Date().toISOString() } : p));
-      if (!result.ok) return;
-      showToast('הסטטוס עודכן');
+      showToast(manualStatus === 'done' ? 'האימון סומן כבוצע תיאום'
+        : manualStatus === 'cancelled' ? 'האימון סומן כבוטל'
+        : 'הסימון בוטל — הסטטוס נגזר מהבקשות');
     },
 
     createCoordination: async (posting, data) => {
@@ -2201,92 +2285,60 @@ export default function App() {
         areas: postingAreas(posting),
         space: postingSpace(posting),
         coordinationStatus: 'initial_coordination_done',
-        requestStatus: 'active',
+        requestStatus: 'pending', // בקשה חדשה נכנסת כ"ממתינה" — לא מעבירה את האימון ל"בתהליך"
         trainingExecutionStatus: 'pending',
         completedAt: null,
         cancellationReason: null,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
+      // כתיבה אחת בלבד — סטטוס האימון נגזר מהבקשות, אין עדכון סטטוס פרסום כאן.
       const coordResult = await mutateCoords(list => [...list, coord]);
       if (!coordResult.ok) return;
-
-      // מעבר אוטומטי עם קבלת בקשה: פנוי -> ממתין לאישור, פתוח לתיאום -> בתהליך תיאום
-      const postResult = await mutatePostings(list => list.map(p => {
-        if (p.id !== posting.id) return p;
-        const patch = {};
-        if (p.status === 'available') patch.status = 'pending_approval';
-        if (postingCoordState(p) === 'open') patch.coordState = 'in_process';
-        return Object.keys(patch).length ? { ...p, ...patch, updatedAt: new Date().toISOString() } : p;
-      }));
-      if (!postResult.ok) {
-        // הכתיבה הראשונה (הבקשה) הצליחה אך השנייה (סטטוס הפרסום) נכשלה —
-        // מצב חלקי. לא מבצעים rollback (מסוכן), אלא מיישרים את התצוגה עם
-        // המצב האמיתי בשרת ומיידעים את המשתמש.
-        showToast('בקשת התיאום נשמרה, אך עדכון סטטוס הפרסום לא הושלם. רעננו ונסו שוב.');
-        await refreshFromStorage();
-        return;
-      }
       showToast('בקשת התיאום נשלחה ונשמרה');
     },
 
+    // אישור בקשה עם אכיפת accepted-יחיד על נתונים טריים (בתוך המוטטור), עם retry אחד על 409.
+    acceptRequest: async (coordId) => {
+      const result = await mutateCoords(list => {
+        const target = list.find(c => c.id === coordId);
+        if (!target) return { block: true, reason: 'not_found' };
+        const exists = list.some(c => c.id !== coordId
+          && coordPostId(c) === coordPostId(target)
+          && normalizeRequestStatus(c) === 'accepted');
+        if (exists) return { block: true, reason: 'accepted_exists' };
+        return list.map(c => c.id === coordId ? { ...c, requestStatus: 'accepted', updatedAt: new Date().toISOString() } : c);
+      }, { retryOnConflict: true });
+      if (result.blocked) {
+        if (result.reason === 'accepted_exists') {
+          showToast('כבר קיימת בקשה מאושרת לאימון הזה. יש לדחות או לבטל אותה כדי לאשר בקשה אחרת.');
+        } else {
+          showToast('הבקשה לא נמצאה (ייתכן שנמחקה). רעננו ונסו שוב.');
+        }
+        return;
+      }
+      if (!result.ok) return; // conflict/שגיאה — ההודעה כבר הוצגה ב-mutateCollection
+      showToast('הבקשה אושרה');
+    },
+
+    rejectRequest: async (coordId) => {
+      const result = await mutateCoords(list => list.map(c => c.id === coordId ? { ...c, requestStatus: 'rejected', updatedAt: new Date().toISOString() } : c));
+      if (!result.ok) return;
+      showToast('הבקשה נדחתה');
+    },
+
+    cancelRequest: async (coordId) => {
+      const result = await mutateCoords(list => list.map(c => c.id === coordId ? { ...c, requestStatus: 'cancelled', updatedAt: new Date().toISOString() } : c));
+      if (!result.ok) return;
+      showToast('הבקשה בוטלה');
+    },
+
+    // מעדכן אך ורק את שלב התיאום המקצועי (coordinationStatus). מנותק לחלוטין
+    // מסטטוס האימון — אינו כותב posting.status / coordState / manualStatus.
     updateCoordinationStage: async (coordId, stageKey) => {
       const coordResult = await mutateCoords(list => list.map(c => c.id === coordId ? { ...c, coordinationStatus: stageKey, updatedAt: new Date().toISOString() } : c));
       if (!coordResult.ok) return;
-      const coord = coordResult.value.find(c => c.id === coordId);
-
-      // אוטומציה דו-כיוונית של הסטטוסים לפי השלב:
-      //   שלב 1 (תיאום ראשוני)       -> "בתהליך תיאום"  + ממתין לאישור
-      //   שלב 2+ (הוחלט על שת״פ ומעלה) -> "סגור לתיאום"    + עבר לתיאום
-      // ביטול שלב מחזיר את הסטטוס אחורה בהתאם.
-      if (coord) {
-        const sIdx = stageIndex(stageKey);
-        const newCoordState = sIdx >= 1 ? 'done' : 'in_process';
-        const newStatus = sIdx >= 1 ? 'in_coordination' : 'pending_approval';
-        const postResult = await mutatePostings(list => list.map(p => {
-          if (p.id !== coord.postId) return p;
-          const patch = {};
-          if (postingCoordState(p) !== newCoordState) patch.coordState = newCoordState;
-          // לא נוגעים בסטטוסים סופיים (הושלם/בוטל)
-          if ((p.status === 'available' || p.status === 'pending_approval' || p.status === 'in_coordination') && p.status !== newStatus) {
-            patch.status = newStatus;
-          }
-          return Object.keys(patch).length ? { ...p, ...patch, updatedAt: new Date().toISOString() } : p;
-        }));
-        if (!postResult.ok) {
-          // שלב התיאום נשמר אך סנכרון סטטוס הפרסום נכשל — מצב חלקי.
-          showToast('שלב התיאום עודכן, אך עדכון סטטוס הפרסום לא הושלם. רעננו ונסו שוב.');
-          await refreshFromStorage();
-          return;
-        }
-      }
       showToast('שלב התיאום עודכן');
-    },
-
-    updateCoordinationRequestStatus: async (coordId, requestStatus) => {
-      const coordResult = await mutateCoords(list => list.map(c => c.id === coordId ? { ...c, requestStatus, updatedAt: new Date().toISOString() } : c));
-      if (!coordResult.ok) return;
-      const nextCoords = coordResult.value;
-      const coord = nextCoords.find(c => c.id === coordId);
-      if (coord) {
-        const stillActive = nextCoords.some(c => c.postId === coord.postId && c.requestStatus === 'active');
-        if (!stillActive) {
-          const postResult = await mutatePostings(list => list.map(p => {
-            if (p.id !== coord.postId) return p;
-            if (p.status === 'pending_approval' || p.status === 'in_coordination') {
-              return { ...p, status: 'available', coordState: 'open', updatedAt: new Date().toISOString() };
-            }
-            return p;
-          }));
-          if (!postResult.ok) {
-            // סטטוס הבקשה עודכן אך שחרור סטטוס הפרסום נכשל — מצב חלקי.
-            showToast('סטטוס הבקשה עודכן, אך עדכון סטטוס הפרסום לא הושלם. רעננו ונסו שוב.');
-            await refreshFromStorage();
-            return;
-          }
-        }
-      }
-      showToast('סטטוס התיאום עודכן');
     },
 
     updateExecutionStatus: async (coordId, execStatus, cancellationReason) => {
@@ -2318,14 +2370,14 @@ export default function App() {
 
   let content;
   if (screen === 'dashboard') content = <Dashboard postings={postings} coordRequests={coordRequests} go={go} />;
-  else if (screen === 'helicopters') content = <PostingListScreen type="helicopter" postings={postings} go={go} onBack={goBack} />;
-  else if (screen === 'ground') content = <PostingListScreen type="ground" postings={postings} go={go} onBack={goBack} />;
+  else if (screen === 'helicopters') content = <PostingListScreen type="helicopter" postings={postings} coordRequests={coordRequests} go={go} onBack={goBack} />;
+  else if (screen === 'ground') content = <PostingListScreen type="ground" postings={postings} coordRequests={coordRequests} go={go} onBack={goBack} />;
   else if (screen === 'posting') content = <PostingDetailScreen postingId={params.id} postings={postings} coordRequests={coordRequests} onBack={goBack} go={go} actions={actions} />;
   else if (screen === 'coordination') content = <CoordinationDetailScreen coordId={params.id} coordRequests={coordRequests} postings={postings} onBack={goBack} go={go} actions={actions} />;
   else if (screen === 'new') content = <NewPostingScreen onBack={goBack} actions={actions} go={go} />;
   else if (screen === 'newHelicopter') content = <NewPostingScreen initialType="helicopter" onBack={goBack} actions={actions} go={go} />;
   else if (screen === 'newGround') content = <NewPostingScreen initialType="ground" onBack={goBack} actions={actions} go={go} />;
-  else if (screen === 'timeline') content = <TimelineScreen postings={postings} go={go} onBack={goBack} />;
+  else if (screen === 'timeline') content = <TimelineScreen postings={postings} coordRequests={coordRequests} go={go} onBack={goBack} />;
   else if (screen === 'analytics') content = <AnalyticsScreen postings={postings} coordRequests={coordRequests} onBack={goBack} />;
   else content = <Dashboard postings={postings} coordRequests={coordRequests} go={go} />;
 
