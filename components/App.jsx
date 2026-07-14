@@ -209,7 +209,13 @@ const deriveTrainingStatus = (posting, requests) => {
   const anyExecCompleted = (requests || []).some(r => r.trainingExecutionStatus === 'completed');
   if (posting.status === 'completed' || anyExecCompleted) return 'done';
   if (posting.coordState === 'done') return 'in_process'; // done ישן בלי completed → בתהליך
-  if ((requests || []).some(r => normalizeRequestStatus(r) === 'accepted')) return 'in_process';
+  // מבוסס על הבקשה שהתקבלה בלבד (accepted יחיד). שלב "הוחלט על שת״פ" ומעלה →
+  // "בוצע תיאום" (כחול); שלב "תיאום ראשוני" → "בתהליך" (כתום). בקשות שאינן
+  // accepted (ממתינה/נדחתה/בוטלה) אינן משפיעות על צבע האימון.
+  const accepted = (requests || []).find(r => normalizeRequestStatus(r) === 'accepted');
+  if (accepted) {
+    return stageIndex(accepted.coordinationStatus) >= stageIndex('specific_times_closed') ? 'done' : 'in_process';
+  }
   return 'open';
 };
 
@@ -1073,29 +1079,6 @@ function PostingDetailScreen({ postingId, postings, coordRequests, onBack, go, a
 
         <div className="mb-3"><AreaChips areas={areas} space={postingSpace(posting)} /></div>
 
-        <div className="bg-white rounded-2xl border border-slate-200 p-3 mb-3">
-          <div className="text-xs font-bold text-slate-500 mb-1">סטטוס האימון</div>
-          <p className="text-[11px] text-slate-400 mb-2">
-            "פנוי" ו"בתהליך" נקבעים אוטומטית לפי הבקשות. ניתן לסמן ידנית שהאימון בוצע או בוטל.
-          </p>
-          <div className="flex gap-2 flex-wrap">
-            <button onClick={() => actions.setTrainingOverride(posting.id, 'done')}
-              className={`px-3 py-1.5 rounded-full text-xs font-bold border ${posting.manualStatus === 'done' ? 'bg-sky-100 text-sky-800 border-transparent' : 'border-slate-200 text-slate-500'}`}>
-              סמן כבוצע תיאום
-            </button>
-            <button onClick={() => actions.setTrainingOverride(posting.id, 'cancelled')}
-              className={`px-3 py-1.5 rounded-full text-xs font-bold border ${posting.manualStatus === 'cancelled' ? 'bg-rose-100 text-rose-800 border-transparent' : 'border-slate-200 text-slate-500'}`}>
-              סמן כבוטל
-            </button>
-            {posting.manualStatus && (
-              <button onClick={() => actions.setTrainingOverride(posting.id, null)}
-                className="px-3 py-1.5 rounded-full text-xs font-bold border border-slate-200 text-slate-500">
-                בטל סימון
-              </button>
-            )}
-          </div>
-        </div>
-
         {!isHeli && (posting.trainingType || posting.airSupportType) && (
           <div className="flex flex-wrap gap-1.5 mb-3">
             {posting.trainingType && <span className="text-xs bg-indigo-50 text-indigo-700 rounded-full px-2.5 py-1 font-bold">סוג אימון: {posting.trainingType}</span>}
@@ -1185,6 +1168,22 @@ function PostingDetailScreen({ postingId, postings, coordRequests, onBack, go, a
                       </a>
                     )}
                   </div>
+                  {/* סרגל התקדמות התיאום — מוצג רק בבקשה שהתקבלה, ומבוסס על ה-coordinationStatus
+                      שלה בלבד. "הוחלט על שת״פ" מסמן את האימון כ"בוצע תיאום" (כחול) דרך הגזירה. */}
+                  {st === 'accepted' && (
+                    <div className="mt-3 pt-3 border-t border-slate-100">
+                      <div className="text-xs font-bold text-slate-500 mb-2">התקדמות התיאום</div>
+                      <ProgressBar
+                        currentKey={c.coordinationStatus}
+                        editable={true}
+                        onStageClick={(stage, i, isDone) => {
+                          if (isDone) actions.updateCoordinationStage(c.id, COORD_STAGES[i - 1].key);
+                          else actions.updateCoordinationStage(c.id, stage.key);
+                        }}
+                      />
+                      <p className="text-[11px] text-slate-400 mt-2 text-center">לחיצה על שלב מסמנת אותו · "הוחלט על שת״פ" מסמן את האימון כבוצע · לחיצה חוזרת על שלב ירוק מבטלת אותו</p>
+                    </div>
+                  )}
                   {hasAccepted && st === 'pending' && (
                     <p className="text-[11px] text-slate-400 mt-2">כדי לאשר בקשה זו יש קודם לדחות/לבטל את הבקשה שהתקבלה.</p>
                   )}
@@ -1192,6 +1191,20 @@ function PostingDetailScreen({ postingId, postings, coordRequests, onBack, go, a
               );
             })}
           </div>
+        )}
+
+        {/* פעולות אימון — ביטול/פתיחה מחדש. ביטול קובע manualStatus='cancelled' (אדום);
+            פתיחה מחדש מנקה רק את מצב הביטול ומחזירה את הסטטוס להיגזר מהבקשה ומהסרגל. */}
+        {posting.manualStatus === 'cancelled' ? (
+          <button onClick={() => actions.setTrainingOverride(posting.id, null)}
+            className="w-full bg-white border border-slate-300 text-slate-700 font-bold py-3 rounded-2xl mt-2">
+            פתיחה מחדש של האימון
+          </button>
+        ) : (
+          <button onClick={() => actions.setTrainingOverride(posting.id, 'cancelled')}
+            className="w-full bg-white border border-rose-300 text-rose-600 font-bold py-3 rounded-2xl mt-2">
+            בטל אימון
+          </button>
         )}
       </div>
 
@@ -1208,7 +1221,6 @@ function CoordinationDetailScreen({ coordId, coordRequests, postings, onBack, go
   const coord = coordRequests.find(c => c.id === coordId);
   const [showCancel, setShowCancel] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
-  const [confirmStage, setConfirmStage] = useState(null);
 
   if (!coord) {
     return (
@@ -1247,28 +1259,13 @@ function CoordinationDetailScreen({ coordId, coordRequests, postings, onBack, go
           <InfoRow icon={AlertTriangle} label="הודעה" value={coord.message} />
         </div>
 
-        <div className="bg-white rounded-2xl border border-slate-200 p-4 mb-4">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="font-bold text-slate-800">התקדמות התיאום</h3>
-            <span className="text-xs text-slate-400">{REQUEST_STATUS_LABEL[normalizeRequestStatus(coord)]}</span>
-          </div>
-          <ProgressBar
-            currentKey={coord.coordinationStatus}
-            editable={['pending', 'accepted'].includes(normalizeRequestStatus(coord))}
-            onStageClick={(stage, i, isDone) => {
-              const idx = stageIndex(coord.coordinationStatus);
-              if (isDone) {
-                // ביטול שלב: חזרה לשלב הקודם
-                actions.updateCoordinationStage(coord.id, COORD_STAGES[i - 1].key);
-              } else if (i >= 1 && idx < 1) {
-                // התקדמות שעוברת דרך "הוחלט על שת״פ" — דורשת אישור
-                setConfirmStage(stage.key);
-              } else {
-                actions.updateCoordinationStage(coord.id, stage.key);
-              }
-            }}
-          />
-          <p className="text-[11px] text-slate-400 mt-2 text-center">לחיצה על שלב מסמנת אותו כבוצע · לחיצה חוזרת על שלב ירוק מבטלת אותו</p>
+        {/* סרגל התקדמות התיאום הועבר לכרטיס הבקשה שהתקבלה במסך הפרסום — כאן מוצג
+            רק סטטוס הבקשה, כדי למנוע כפילות. */}
+        <div className="bg-white rounded-2xl border border-slate-200 p-4 mb-4 flex items-center justify-between">
+          <h3 className="font-bold text-slate-800">סטטוס הבקשה</h3>
+          <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-bold ${REQUEST_STATUS_STYLE[normalizeRequestStatus(coord)]}`}>
+            {REQUEST_STATUS_LABEL[normalizeRequestStatus(coord)]}
+          </span>
         </div>
 
         <div className="bg-white rounded-2xl border border-slate-200 p-4 mb-4">
@@ -1312,36 +1309,6 @@ function CoordinationDetailScreen({ coordId, coordRequests, postings, onBack, go
           </button>
         )}
       </div>
-
-      {confirmStage && (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center px-6" onClick={() => setConfirmStage(null)}>
-          <div className="bg-white rounded-2xl w-full max-w-sm p-5" onClick={e => e.stopPropagation()}>
-            <div className="flex items-start gap-3 mb-4">
-              <div className="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center shrink-0">
-                <AlertTriangle size={20} className="text-amber-600" />
-              </div>
-              <div>
-                <h3 className="font-bold text-slate-800 mb-1">אישור שת״פ</h3>
-                <p className="text-sm text-slate-600 leading-relaxed">
-                  יש ללחוץ על כפתור זה רק לאחר שהשת״פ אושר על ידי שני הצדדים.
-                </p>
-              </div>
-            </div>
-            <div className="flex gap-2">
-              <button
-                onClick={() => { actions.updateCoordinationStage(coord.id, confirmStage); setConfirmStage(null); }}
-                className="flex-1 bg-sky-600 text-white font-bold py-2.5 rounded-xl active:scale-[0.98] transition">
-                אישור
-              </button>
-              <button
-                onClick={() => setConfirmStage(null)}
-                className="flex-1 bg-white border border-slate-300 text-slate-700 font-bold py-2.5 rounded-xl">
-                ביטול
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
