@@ -1129,7 +1129,8 @@ function PostingDetailScreen({ postingId, postings, coordRequests, onBack, go, a
           <div className="space-y-2 mb-4">
             {relatedCoords.map(c => {
               const st = normalizeRequestStatus(c);
-              const waUrl = (c.requestedByType === 'ground_force' && st !== 'rejected' && st !== 'cancelled')
+              // WhatsApp מוצג רק לאחר שהבקשה אושרה (accepted), ורק לבקשת כוח קרקעי.
+              const waUrl = (c.requestedByType === 'ground_force' && st === 'accepted')
                 ? buildWhatsAppUrl(posting, c) : null;
               return (
                 <div key={c.id} className="bg-white border border-slate-200 rounded-xl p-3">
@@ -1155,7 +1156,7 @@ function PostingDetailScreen({ postingId, postings, coordRequests, onBack, go, a
                         אשר בקשה
                       </button>
                     )}
-                    {(st === 'pending' || st === 'accepted') && (
+                    {st === 'pending' && (
                       <button onClick={() => actions.rejectRequest(c.id)}
                         className="px-3 py-1.5 rounded-lg text-xs font-bold bg-white border border-rose-300 text-rose-600 active:scale-[0.98]">
                         דחה
