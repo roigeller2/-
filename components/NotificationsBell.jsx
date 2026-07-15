@@ -194,8 +194,12 @@ export default function NotificationsBell({ onNavigate }) {
         <div
           role="dialog"
           aria-label="התראות"
-          className="absolute z-50 mt-2 end-0 w-80 max-w-[calc(100vw-1rem)] bg-white text-slate-900 rounded-2xl border border-slate-200 shadow-xl overflow-hidden"
-          style={{ insetInlineEnd: 0 }}
+          /*
+            מובייל: פאנל ממורכז מתחת לפעמון (fixed), שוליים של 16px משני הצדדים
+            (inset-x-4 → רוחב ≈ calc(100vw-32px)), ומרווח קטן מהסרגל (top-11).
+            דסקטופ (sm ומעלה): Dropdown הקיים — absolute, end-0, w-80, mt-2.
+          */
+          className="fixed inset-x-4 top-11 z-50 bg-white text-slate-900 rounded-2xl border border-slate-200 shadow-xl overflow-hidden sm:absolute sm:inset-x-auto sm:end-0 sm:top-auto sm:mt-2 sm:w-80 sm:max-w-[calc(100vw-1rem)]"
         >
           <div className="flex items-center justify-between px-3 py-2.5 border-b border-slate-100">
             <span className="text-sm font-bold text-slate-800">התראות</span>
