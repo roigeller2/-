@@ -19,7 +19,7 @@
     מ-`ADMIN_EMAILS`; רק approved מקבל גישה.
   - בעלות (`ownerId`/`requesterId`) נאכפת בשרת בתוך read→mutate→CAS.
   - הוסר ה-PUT של הקולקציה המלאה; כל שינוי הוא command ממוקד.
-- **N1 — מערכת התראות in-app (MVP).** נפרס, ממתין לאימות ידני בפרודקשן (גרסה 13).
+- **N1 — מערכת התראות in-app (MVP).** נפרס ואומת בפרודקשן (גרסה 13).
   - `request_new`/`request_accepted`/`request_rejected`, נוצרות בשרת אחרי
     הצלחת המוטציה, best-effort, `id` דטרמיניסטי, אחסון Hash נפרד לכל משתמש.
   - `GET`/`POST(markRead/markAllRead)` תחת `/api/notifications`.
