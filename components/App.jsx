@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import React, { useState, useEffect, useMemo, useCallback, useRef, useContext } from "react";
 import {
   Home, Users, BarChart3, Plus, ArrowRight, Phone, MapPin,
   Calendar, Clock, Search, X, Check, ChevronLeft, ChevronDown,
@@ -104,6 +104,14 @@ const EXEC_STATUS = {
 /* ============================== עזרים ============================== */
 
 const uid = () => (crypto.randomUUID ? crypto.randomUUID() : 'id-' + Date.now() + '-' + Math.random().toString(16).slice(2));
+
+// זהות המשתמש הנוכחי (מגיע מה-AuthGate). משמש להסתרת פעולות לא-מורשות ב-UI
+// בלבד — האכיפה האמיתית בשרת. { userId, isAdmin }.
+const MeContext = React.createContext({ userId: null, isAdmin: false });
+const useMe = () => useContext(MeContext);
+// האם המשתמש רשאי לנהל את האימון (בעל האימון או מנהל). ownerId חסר = legacy → מנהל בלבד.
+const canManagePostingUI = (me, posting) => !!me?.isAdmin || (posting?.ownerId != null && posting.ownerId === me?.userId);
+const canCancelRequestUI = (me, coord) => !!me?.isAdmin || (coord?.requesterId != null && coord.requesterId === me?.userId);
 
 const fmtDate = (d) => {
   if (!d) return '—';
@@ -1014,6 +1022,8 @@ function PostingDetailScreen({ postingId, postings, coordRequests, onBack, go, a
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   const derivedState = deriveTrainingStatus(posting, relatedCoords);
   const hasAccepted = relatedCoords.some(c => normalizeRequestStatus(c) === 'accepted');
+  const me = useMe();
+  const canManage = canManagePostingUI(me, posting); // בעל האימון או מנהל — פעולות ניהול מוסתרות לאחרים (האכיפה בשרת)
 
   const handleOpenCoordination = (data) => {
     setError('');
@@ -1117,19 +1127,19 @@ function PostingDetailScreen({ postingId, postings, coordRequests, onBack, go, a
                     </button>
                   </div>
                   <div className="flex flex-wrap gap-2 mt-3">
-                    {st === 'pending' && (
+                    {canManage && st === 'pending' && (
                       <button onClick={() => actions.acceptRequest(c.id)} disabled={hasAccepted}
                         className={`px-3 py-1.5 rounded-lg text-xs font-bold ${hasAccepted ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'bg-emerald-600 text-white active:scale-[0.98]'}`}>
                         אשר בקשה
                       </button>
                     )}
-                    {st === 'pending' && (
+                    {canManage && st === 'pending' && (
                       <button onClick={() => actions.rejectRequest(c.id)}
                         className="px-3 py-1.5 rounded-lg text-xs font-bold bg-white border border-rose-300 text-rose-600 active:scale-[0.98]">
                         דחה
                       </button>
                     )}
-                    {waUrl && (
+                    {canManage && waUrl && (
                       <a href={waUrl} target="_blank" rel="noopener noreferrer"
                         className="px-3 py-1.5 rounded-lg text-xs font-bold text-white active:scale-[0.98]" style={{ backgroundColor: '#16a34a' }}>
                         WhatsApp לכוח
@@ -1138,7 +1148,7 @@ function PostingDetailScreen({ postingId, postings, coordRequests, onBack, go, a
                   </div>
                   {/* סרגל התקדמות התיאום — מוצג רק בבקשה שהתקבלה, ומבוסס על ה-coordinationStatus
                       שלה בלבד. "הוחלט על שת״פ" מסמן את האימון כ"בוצע תיאום" (כחול) דרך הגזירה. */}
-                  {st === 'accepted' && (
+                  {canManage && st === 'accepted' && (
                     <div className="mt-3 pt-3 border-t border-slate-100">
                       <div className="text-xs font-bold text-slate-500 mb-2">התקדמות התיאום</div>
                       <ProgressBar
@@ -1161,9 +1171,8 @@ function PostingDetailScreen({ postingId, postings, coordRequests, onBack, go, a
           </div>
         )}
 
-        {/* פעולות אימון — ביטול/פתיחה מחדש. ביטול קובע manualStatus='cancelled' (אדום);
-            פתיחה מחדש מנקה רק את מצב הביטול ומחזירה את הסטטוס להיגזר מהבקשה ומהסרגל. */}
-        {posting.manualStatus === 'cancelled' ? (
+        {/* פעולות אימון (בעל האימון/מנהל בלבד) — ביטול/פתיחה מחדש. */}
+        {canManage && (posting.manualStatus === 'cancelled' ? (
           <button onClick={() => actions.setTrainingOverride(posting.id, null)}
             className="w-full bg-white border border-slate-300 text-slate-700 font-bold py-3 rounded-2xl mt-2">
             פתיחה מחדש של האימון
@@ -1173,7 +1182,7 @@ function PostingDetailScreen({ postingId, postings, coordRequests, onBack, go, a
             className="w-full bg-white border border-rose-300 text-rose-600 font-bold py-3 rounded-2xl mt-2">
             בטל אימון
           </button>
-        )}
+        ))}
       </div>
 
       {showModal && (
@@ -1201,6 +1210,9 @@ function CoordinationDetailScreen({ coordId, coordRequests, postings, onBack, go
 
   const posting = postings.find(p => p.id === coord.postId);
   const isHeliPost = coord.postType === 'helicopter';
+  const me = useMe();
+  const canManage = canManagePostingUI(me, posting); // בעל האימון/מנהל — עדכון סטטוס ביצוע
+  const canCancel = canCancelRequestUI(me, coord);    // שולח הבקשה/מנהל — ביטול הבקשה
 
   return (
     <div className="pb-10">
@@ -1236,6 +1248,7 @@ function CoordinationDetailScreen({ coordId, coordRequests, postings, onBack, go
           </span>
         </div>
 
+        {canManage && (
         <div className="bg-white rounded-2xl border border-slate-200 p-4 mb-4">
           <h3 className="font-bold text-slate-800 mb-3">סטטוס ביצוע בפועל</h3>
           <div className="flex gap-2 flex-wrap">
@@ -1268,8 +1281,9 @@ function CoordinationDetailScreen({ coordId, coordRequests, postings, onBack, go
             </div>
           )}
         </div>
+        )}
 
-        {['pending', 'accepted'].includes(normalizeRequestStatus(coord)) && (
+        {canCancel && ['pending', 'accepted'].includes(normalizeRequestStatus(coord)) && (
           <button
             onClick={() => actions.cancelRequest(coord.id)}
             className="w-full bg-white border border-rose-300 text-rose-600 font-bold py-3 rounded-2xl">
@@ -2013,7 +2027,7 @@ function AnalyticsScreen({ postings, coordRequests, onBack }) {
 
 const SYNC_INTERVAL_MS = 3000;
 
-export default function App() {
+export default function App({ me = { userId: null, isAdmin: false } }) {
   const [loading, setLoading] = useState(true);
   const [postings, setPostings] = useState([]);
   const [coordRequests, setCoordRequests] = useState([]);
@@ -2266,6 +2280,7 @@ export default function App() {
   const bottomTabs = ['dashboard', 'helicopters', 'ground', 'analytics'];
 
   return (
+    <MeContext.Provider value={me}>
     <div dir="rtl" lang="he" className="min-h-screen bg-slate-50 text-slate-900" style={{ fontFamily: "'Heebo', system-ui, sans-serif" }}>
       <div className="max-w-md mx-auto pb-20 min-h-screen bg-slate-50 relative">
 
@@ -2306,5 +2321,6 @@ export default function App() {
         )}
       </div>
     </div>
+    </MeContext.Provider>
   );
 }

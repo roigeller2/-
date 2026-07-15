@@ -1,4 +1,5 @@
 import './globals.css';
+import Providers from './providers';
 
 export const metadata = {
   title: 'מערכת תיאום אימונים משותפים',
@@ -8,7 +9,7 @@ export const metadata = {
 export default function RootLayout({ children }) {
   return (
     <html lang="he" dir="rtl">
-      <body>{children}</body>
+      <body><Providers>{children}</Providers></body>
     </html>
   );
 }
