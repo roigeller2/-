@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react';
 import { useSession, signIn, signOut } from 'next-auth/react';
 import App from './App';
+import NotificationsBell from './NotificationsBell';
 
 function Center({ children }) {
   return (
@@ -105,19 +106,24 @@ function AdminUsersScreen({ onBack }) {
 
 function ApprovedShell({ session }) {
   const [screen, setScreen] = useState('app');
+  const [navRequest, setNavRequest] = useState(null);
   const me = { userId: session.userId, isAdmin: !!session.access?.isAdmin };
   const user = session.user || {};
   if (screen === 'admin' && me.isAdmin) return <AdminUsersScreen onBack={() => setScreen('app')} />;
+  // לחיצה על התראה: מבטיחים שאנחנו במסך האפליקציה, ומעבירים בקשת ניווט ל-App
+  // (שמנווט למסך הקיים המתאים לפי הסוג). הפעמון מוצג רק כאן — למשתמש approved.
+  const handleNavigate = (target) => { setScreen('app'); setNavRequest(target); };
   return (
     <div>
       <div dir="rtl" className="bg-slate-900 text-white text-xs px-4 py-2 flex items-center justify-between" style={{ fontFamily: "'Heebo', system-ui, sans-serif" }}>
         <span className="truncate">{user.name || user.email}{me.isAdmin ? ' · מנהל' : ''}</span>
         <span className="flex items-center gap-3 shrink-0">
+          <NotificationsBell onNavigate={handleNavigate} />
           {me.isAdmin && <button onClick={() => setScreen('admin')} className="font-bold underline">ניהול משתמשים</button>}
           <button onClick={() => signOut()} className="font-bold underline">התנתקות</button>
         </span>
       </div>
-      <App me={me} />
+      <App me={me} navRequest={navRequest} onNavHandled={() => setNavRequest(null)} />
     </div>
   );
 }

@@ -6,6 +6,8 @@ import {
   COORD_STAGE_KEYS, EXEC_STATUS_KEYS, coordPostId,
   mutatorCreate, mutatorAccept, mutatorSetRequestStatus, mutatorSetStage, mutatorSetExec, mutatorCancelOwned,
 } from '../../../lib/coord';
+import { notify, NOTIF_TYPES } from '../../../lib/notify';
+import { buildRequestNewEvent, buildRequestStatusEvent, emitIfOk } from '../../../lib/coordNotify';
 
 export const dynamic = 'force-dynamic';
 
@@ -90,6 +92,13 @@ export async function POST(request) {
         updatedAt: now,
       };
       const result = await mutateCollectionServer(DATA_KEY, REV_KEY, mutatorCreate(coord));
+      // התראה רק אחרי הצלחת ה-CAS. הנתונים נלקחים מהבקשה שנוצרה (coord); רק
+      // ownerId מגיע מהפרסום — שדה בלתי-משתנה, לכן קריאה אחת בטוחה (ללא TOCTOU).
+      await emitIfOk(result, async () => {
+        const { value: postings } = await readCollection(POSTINGS_KEY, POSTINGS_REV);
+        const posting = postings.find(p => p.id === coordPostId(coord));
+        await notify(buildRequestNewEvent(coord, posting, userId));
+      });
       return respond(result, { id: coord.id });
     }
 
@@ -106,13 +115,24 @@ export async function POST(request) {
     if (op === 'accept') {
       const deny = await checkPostingOwnerForCoord(id, access, userId);
       if (deny) return deny;
-      return respond(await mutateCollectionServer(DATA_KEY, REV_KEY, mutatorAccept(id)));
+      const result = await mutateCollectionServer(DATA_KEY, REV_KEY, mutatorAccept(id));
+      // נמען = יוצר הבקשה, מתוך הבקשה הטרייה שהוחזרה מהמוטציה (result.value).
+      await emitIfOk(result, async (fresh) => {
+        const coord = (fresh || []).find(c => c.id === id);
+        if (coord) await notify(buildRequestStatusEvent(NOTIF_TYPES.REQUEST_ACCEPTED, coord, userId));
+      });
+      return respond(result);
     }
 
     if (op === 'reject') {
       const deny = await checkPostingOwnerForCoord(id, access, userId);
       if (deny) return deny;
-      return respond(await mutateCollectionServer(DATA_KEY, REV_KEY, mutatorSetRequestStatus(id, 'rejected')));
+      const result = await mutateCollectionServer(DATA_KEY, REV_KEY, mutatorSetRequestStatus(id, 'rejected'));
+      await emitIfOk(result, async (fresh) => {
+        const coord = (fresh || []).find(c => c.id === id);
+        if (coord) await notify(buildRequestStatusEvent(NOTIF_TYPES.REQUEST_REJECTED, coord, userId));
+      });
+      return respond(result);
     }
 
     if (op === 'setStage') {

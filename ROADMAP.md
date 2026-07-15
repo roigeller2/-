@@ -19,6 +19,11 @@
     מ-`ADMIN_EMAILS`; רק approved מקבל גישה.
   - בעלות (`ownerId`/`requesterId`) נאכפת בשרת בתוך read→mutate→CAS.
   - הוסר ה-PUT של הקולקציה המלאה; כל שינוי הוא command ממוקד.
+- **N1 — מערכת התראות in-app (MVP).** נפרס, ממתין לאימות ידני בפרודקשן (גרסה 13).
+  - `request_new`/`request_accepted`/`request_rejected`, נוצרות בשרת אחרי
+    הצלחת המוטציה, best-effort, `id` דטרמיניסטי, אחסון Hash נפרד לכל משתמש.
+  - `GET`/`POST(markRead/markAllRead)` תחת `/api/notifications`.
+  - פעמון + Badge + פאנל, Polling 60ש' + focus; בלי מייל/Push/העדפות.
 
 ## הבא בתור
 
@@ -27,6 +32,10 @@
 
 ## שלבים עתידיים (סדר לא סופי)
 
+- **N2 — הרחבת ההתראות.** (טרם מומש) `request_cancelled` (לבעל האימון),
+  `training_cancelled` (ליוצר הבקשה שאושרה), `user_pending` (לכל Admin).
+- **"דרך מי הגעת אלינו?"** (טרם מומש) שדה חובה במסך ההצטרפות הראשוני; אכיפה
+  בשרת ב-`admin/users setStatus`; יוצג ל-Admin ובעתיד בהתראת `user_pending`.
 - **שלב 2B — ניקוי ואיחוד.** (טרם התחיל; מחכה לאישור)
   - הסרה/איחוד סופיים של הציר הכפול הישן (`POSTING_STATUS` מול הסטטוס הנגזר).
   - טיפול ב-`EXEC_STATUS` (סטטוס ביצוע) ובשדות הישנים שאינם מניעים עוד לוגיקה.

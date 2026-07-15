@@ -2027,7 +2027,7 @@ function AnalyticsScreen({ postings, coordRequests, onBack }) {
 
 const SYNC_INTERVAL_MS = 3000;
 
-export default function App({ me = { userId: null, isAdmin: false } }) {
+export default function App({ me = { userId: null, isAdmin: false }, navRequest = null, onNavHandled }) {
   const [loading, setLoading] = useState(true);
   const [postings, setPostings] = useState([]);
   const [coordRequests, setCoordRequests] = useState([]);
@@ -2159,6 +2159,19 @@ export default function App({ me = { userId: null, isAdmin: false } }) {
   }, []);
 
   const goTab = useCallback((s) => { setHistory([]); setScreen(s); setParams({}); window.scrollTo(0, 0); }, []);
+
+  // ניווט יזום מבחוץ (לחיצה על התראה): ApprovedShell מעביר navRequest, ואנו
+  // מנווטים למסך הקיים המתאים (posting/coordination) ומנקים את הבקשה. משתמשים
+  // במסכים הקיימים בלבד — אין Route חדש עבור ההתראות.
+  useEffect(() => {
+    if (!navRequest?.id || !navRequest?.screen) return;
+    setHistory(h => [...h, { screen, params }]);
+    setScreen(navRequest.screen);
+    setParams({ id: navRequest.id });
+    window.scrollTo(0, 0);
+    onNavHandled && onNavHandled();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [navRequest]);
 
   /* ---------- לוגיקה עסקית ---------- */
 
