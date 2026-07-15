@@ -14,6 +14,17 @@
   - 2A.2: WhatsApp רק ל-accepted; "דחה" רק ל-pending; ביטול accepted רק
     ממסך הפרטים.
 
+## בתהליך — לפני פריסה
+
+- **שלב 3 — מערכת משתמשים והרשאות (MVP).** קוד מומש ונבדק מקומית (unit +
+  UI), הכל ב-commits מקומיים בלבד. נותר לפני Push/Deploy יחיד:
+  1. הקמת Google OAuth, Resend, ומשתני סביבה ב-Vercel (Preview+Production).
+  2. גיבוי מלא (JSON) ל-Google Drive.
+  3. Push יחיד + Deploy יחיד; התחברות ראשונה של Admin; אימות בפרודקשן.
+  4. שיוך נתוני legacy ל-Admin — רק לאחר גיבוי, אישור נפרד, וקבלת ה-userId
+     של ה-Admin מהתחברותו הראשונה (idempotent).
+  - מומלץ בנפרד: עדכון Next.js 14.2.5 → 14.2.35 (advisory קיים).
+
 ## הבא בתור
 
 - **שלב 2B — ניקוי ואיחוד.** (טרם התחיל; מחכה לאישור)

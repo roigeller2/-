@@ -3,6 +3,38 @@
 יומן שינויים של מערכת תיאום אימונים משותפים (טייסות ⇄ כוחות קרקעיים).
 מהחדש לישן.
 
+## גרסה 12 — שלב 3 (מערכת משתמשים והרשאות) — טרם נפרס (Push/Deploy יחיד בסוף)
+מומש בשלבים מקומיים (commits dd404e9, 9a7fb60, 33dcb5e, 1c7b5de, 00631ab)
+בלי Push, עד להשלמת הקמת הסביבה (Google/Resend/Vercel) וגיבוי.
+
+### תשתית ו-API (חלקים 1–3)
+- לקוח Redis משותף (`lib/redis.js`) ועוזרי CAS/collection (`lib/collection.js`):
+  קריאה אטומית + `mutateCollectionServer` (read→mutate→CAS בשרת, retry וחוזה
+  block מפורש `{block, reason, httpStatus}`).
+- הוסר ה-PUT של הקולקציה המלאה (חשיפה קריטית). כל שינוי עובר כ-command
+  ממוקד (POST {op,...}); השרת קורא→משנה→CAS על נתונים טריים.
+
+### הרשאות ומשתמשים (חלקים 4a–4b)
+- Auth.js (NextAuth v5) עם Google + Magic Link (Resend), `session` מבוסס-DB
+  ומתאם Upstash (prefix `auth:`).
+- פרופילי משתמש נפרדים (`lib/users.js`, prefix `profile:`) עם
+  `approvalStatus`: pending / approved / rejected / disabled; ההחלטה האחרונה
+  גוברת, מעברים מבוקרים.
+- כללי הרשאה (`lib/authz.js`): Admin נגזר מ-`ADMIN_EMAILS` (לא נשמר); רק
+  `approved` מקבל גישה ל-API; בעלות (`ownerId`/`requesterId`) נאכפת בשרת.
+
+### אכיפה בשרת (חלק 4c)
+- כל endpoint של נתונים דורש session מאושר, אחרת 403 בלי שינוי נתונים.
+- יצירה משייכת בעלות בשרת (`ownerId`/`requesterId` מה-session, לא מהלקוח);
+  פעולות בעלים (accept/reject/stage/exec/override/cancel) נבדקות מול הבעלים
+  על נתונים טריים בתוך המוטטור.
+
+### ממשק (חלק 4d)
+- שער כניסה: מסך התחברות (Google + אימייל), ומסכי מצב חשבון
+  (ממתין/נדחה/הושבת) לפי `approvalStatus`.
+- מסך "ניהול משתמשים" ל-Admin (אישור/דחייה/השבתה).
+- הסתרת פעולות ניהול בממשק ממי שאינו בעל האימון (בנוסף לאכיפה בשרת).
+
 ## גרסה 11 — שלב 2A (מודל בקשות ותיאום מרובה)
 
 ### 2A.2 — כפתורי פעולה לפי סטטוס בכרטיס הבקשה (commit 0d23e07)
