@@ -13,32 +13,17 @@ function Center({ children }) {
 }
 
 function LoginScreen() {
-  const [email, setEmail] = useState('');
-  const [sent, setSent] = useState(false);
+  // MVP: Google בלבד. תשתית ה-Magic Link נשמרה בשרת (auth.js) לעתיד, אך אינה
+  // נטענת ואינה מוצגת כאן כל עוד משתני Resend אינם מוגדרים.
   return (
     <Center>
       <div className="bg-white rounded-2xl border border-slate-200 p-6 text-center">
         <h1 className="text-lg font-bold text-slate-800 mb-1">מערכת תיאום אימונים משותפים</h1>
         <p className="text-sm text-slate-500 mb-5">התחברות למערכת</p>
         <button onClick={() => signIn('google')}
-          className="w-full bg-slate-900 text-white font-bold py-3 rounded-xl mb-4">
+          className="w-full bg-slate-900 text-white font-bold py-3 rounded-xl">
           התחברות עם Google
         </button>
-        <div className="text-xs text-slate-400 mb-3">או קישור התחברות למייל</div>
-        {sent ? (
-          <p className="text-sm text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2">
-            נשלח קישור התחברות לכתובת {email}. בדקו את תיבת המייל.
-          </p>
-        ) : (
-          <>
-            <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@example.com"
-              className="w-full border border-slate-300 rounded-xl px-3 py-2.5 mb-2 text-sm" />
-            <button onClick={() => { if (email.trim()) { signIn('resend', { email: email.trim() }); setSent(true); } }}
-              className="w-full border-2 border-slate-900 text-slate-900 font-bold py-2.5 rounded-xl">
-              שליחת קישור התחברות
-            </button>
-          </>
-        )}
       </div>
     </Center>
   );
