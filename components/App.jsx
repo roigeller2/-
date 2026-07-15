@@ -256,39 +256,6 @@ async function loadCollection(key) {
   }
 }
 
-// שמירה עם Optimistic Concurrency Control: השרת מקבל את ה-revision שהלקוח
-// קרא (expectedRev) ומבצע כתיבה אטומית (Lua CAS) רק אם אף אחד אחר לא כתב
-// בינתיים. אם מישהו אחר כן כתב — מוחזר conflict:true עם הנתונים והרביזיה
-// העדכניים, ואנחנו לא דורסים אותם.
-async function saveCollection(key, items, expectedRev) {
-  try {
-    const res = await fetch(API_PATH[key], {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ items, expectedRev }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (res.status === 409 || data.conflict) {
-      console.error(`[saveCollection] קונפליקט גרסה ב-"${key}": expectedRev=${expectedRev}, rev בפועל=${data.rev}`);
-      return {
-        ok: false,
-        conflict: true,
-        items: Array.isArray(data.value) ? data.value : [],
-        rev: typeof data.rev === 'number' ? data.rev : expectedRev,
-        error: data.error || 'הנתונים השתנו במכשיר אחר',
-      };
-    }
-    if (!res.ok) {
-      const error = data.error || `שגיאת שרת (קוד ${res.status})`;
-      console.error('storage save error', error);
-      return { ok: false, error };
-    }
-    return { ok: true, rev: typeof data.rev === 'number' ? data.rev : expectedRev + 1 };
-  } catch (e) {
-    console.error('storage save error', e);
-    return { ok: false, error: e?.message || String(e) };
-  }
-}
 
 // מיזוג לפי id — הרשומה עם updatedAt חדש יותר מנצחת.
 // כך שני טלפונים שכותבים במקביל לא דורסים אחד את השני.
@@ -2113,83 +2080,51 @@ export default function App() {
     };
   }, [refreshFromStorage]);
 
-  /* ---------- כתיבה בטוחה: קרא-מזג-כתוב ---------- */
+  /* ---------- כתיבה: פקודות ממוקדות מול השרת ---------- */
 
-  // חוזה ה-mutator:
-  //   • מחזיר מערך  → כתיבה רגילה (כל ה-callers הקיימים ממשיכים ללא שינוי).
-  //   • מחזיר { block:true, reason } → אין PUT, ה-revision לא משתנה, ה-state
-  //     מיושר לנתונים הטריים, ומוחזר { ok:false, blocked:true, reason }.
-  // options.retryOnConflict (opt-in): על 409 מבצעים ניסיון חוזר אחד בלבד —
-  //   הניסיון החוזר מתחיל מ-loadCollection חדש, וה-mutator רץ שוב על נתונים
-  //   טריים. ברירת המחדל (false) שומרת בדיוק על מדיניות הקונפליקטים הקיימת.
-  const mutateCollection = useCallback(async (key, ref, revRef, setState, mutator, options = {}) => {
-    const maxAttempts = options.retryOnConflict ? 2 : 1;
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      // קריאה-לפני-כתיבה: אם לא ניתן לקרוא את הנתונים העדכניים מהשרת, עוצרים
-      // כאן ולא שולחים PUT בכלל — כתיבה על בסיס מידע חלקי/ריק עלולה לדרוס
-      // בטעות נתונים אמיתיים שכבר קיימים במסד המשותף.
-      let remote;
-      try {
-        remote = await loadCollection(key);
-      } catch (e) {
-        console.error(`[mutateCollection] השמירה ל-"${key}" בוטלה — לא ניתן היה לקרוא את הנתונים הקיימים מהשרת:`, e);
-        setStorageState(s => s === 'unavailable' ? s : 'error');
-        setLastError(e?.message || String(e));
-        showToast('השמירה בוטלה כדי להגן על הנתונים — לא ניתן היה לקרוא את המידע העדכני מהשרת. נסו שוב.');
-        return { ok: false, value: ref.current };
-      }
-      revRef.current = remote.rev;
-      const merged = mergeById(ref.current, remote.items);
-      const out = mutator(merged);
-
-      // חסימה מפורשת: המוטטור החליט לא לכתוב (על בסיס הנתונים הטריים).
-      if (out && out.block === true) {
-        setState(merged);
-        ref.current = merged;
-        return { ok: false, blocked: true, reason: out.reason, value: merged };
-      }
-
-      const next = out;
-      setState(next);
-      ref.current = next;
-      const result = await saveCollection(key, next, remote.rev);
-      if (result.conflict) {
-        // מישהו אחר כתב בין הקריאה לכתיבה — לא דורסים אותו. מאמצים את הנתונים
-        // הטריים. אם retry מותר ונותר ניסיון — מנסים שוב על הנתונים הטריים.
-        setState(result.items);
-        ref.current = result.items;
-        revRef.current = result.rev;
-        if (attempt < maxAttempts) {
-          continue;
-        }
-        setStorageState(s => s === 'unavailable' ? s : 'error');
-        setLastError(result.error || '');
-        showToast('הנתונים השתנו במכשיר אחר בזמן השמירה — הפעולה לא בוצעה. נסו שוב.');
-        return { ok: false, conflict: true, value: result.items };
-      }
-      if (!result.ok) {
-        // השמירה בפועל נכשלה — מבטלים את העדכון האופטימי כדי שהממשק לא יראה
-        // כאילו הרשומה נשמרה, בזמן שהיא קיימת רק בזיכרון המקומי. אין retry
-        // על שגיאה שאינה 409.
-        setState(merged);
-        ref.current = merged;
-        setStorageState(s => s === 'unavailable' ? s : 'error');
-        setLastError(result.error || '');
-        showToast(`שגיאת שמירה: ${result.error || 'שגיאה לא ידועה בשרת'}`);
-        return { ok: false, value: merged };
-      }
-      revRef.current = result.rev;
+  // קריאה ל-endpoint ממוקד-פעולה. השרת מבצע את המוטציה על נתונים טריים (כולל
+  // בדיקות אינווריאנט/הרשאה עתידיות) ומחזיר את ה-collection המעודכן; הלקוח
+  // מאמץ אותו כמקור אמת במקום לשלוח collection שלמה. מיישר מצב אחסון/סנכרון.
+  // תשובות: ok / conflict / blocked(reason) / שגיאה — ה-toast הגנרי מוצג כאן,
+  // וה-caller מטפל ב-blocked לפי ה-reason.
+  const runCommand = async (apiPath, setState, ref, revRef, op, payload) => {
+    let res, data;
+    try {
+      res = await fetch(apiPath, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ op, ...payload }),
+      });
+      data = await res.json().catch(() => ({}));
+    } catch (e) {
+      setStorageState(s => s === 'unavailable' ? s : 'error');
+      setLastError(e?.message || String(e));
+      showToast('השמירה נכשלה — בעיית רשת. נסו שוב.');
+      return { ok: false, networkError: true };
+    }
+    if (data.ok) {
+      setState(data.value);
+      ref.current = data.value;
+      revRef.current = data.rev;
       setStorageState(s => s === 'unavailable' ? s : 'ok');
       setLastError('');
       setLastSync(new Date());
-      return { ok: true, value: next };
+    } else {
+      setStorageState(s => s === 'unavailable' ? s : 'error');
+      setLastError(data.error || '');
+      if (data.conflict) {
+        showToast('הנתונים השתנו במכשיר אחר בזמן השמירה — הפעולה לא בוצעה. נסו שוב.');
+      } else if (!data.blocked) {
+        showToast(`שגיאת שמירה: ${data.error || 'שגיאה לא ידועה בשרת'}`);
+      }
     }
-    // הגנה: לא אמור להגיע לכאן.
-    return { ok: false, conflict: true, value: ref.current };
-  }, []);
+    return { httpStatus: res.status, ...data };
+  };
 
-  const mutatePostings = (mutator, options) => mutateCollection(KEY_POSTINGS, postingsRef, postingsRevRef, setPostings, mutator, options);
-  const mutateCoords = (mutator, options) => mutateCollection(KEY_COORDS, coordsRef, coordsRevRef, setCoordRequests, mutator, options);
+  const postingCommand = (op, payload) =>
+    runCommand(API_PATH.postings, setPostings, postingsRef, postingsRevRef, op, payload);
+  const coordCommand = (op, payload) =>
+    runCommand(API_PATH[KEY_COORDS], setCoordRequests, coordsRef, coordsRevRef, op, payload);
 
   /* ---------- ניווט ---------- */
 
@@ -2215,27 +2150,27 @@ export default function App() {
 
   const actions = {
     createPosting: async (data, onDone) => {
-      const posting = { id: uid(), status: 'available', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), ...data };
-      const result = await mutatePostings(list => [...list, posting]);
-      if (!result.ok) return;
+      // השרת מייצר id/status/timestamps ומבצע את הכתיבה. שולחים רק את שדות הנתונים.
+      const r = await postingCommand('create', { data });
+      if (!r.ok) return;
       showToast('הפרסום נוצר ונשמר');
-      onDone && onDone(posting.id);
+      onDone && onDone(r.id);
     },
 
     // override ידני לסטטוס האימון: 'done' (בוצע) / 'cancelled' (בוטל) / null (חזרה לגזירה).
-    // גובר על הגזירה האוטומטית. כתיבה אחת בלבד.
     setTrainingOverride: async (postingId, manualStatus) => {
-      const result = await mutatePostings(list => list.map(p => p.id === postingId
-        ? { ...p, manualStatus: manualStatus || undefined, updatedAt: new Date().toISOString() } : p));
-      if (!result.ok) return;
+      const r = await postingCommand('setTrainingOverride', { id: postingId, manualStatus });
+      if (r.blocked) { showToast('הפרסום לא נמצא (ייתכן שנמחק). רעננו ונסו שוב.'); return; }
+      if (!r.ok) return;
       showToast(manualStatus === 'done' ? 'האימון סומן כבוצע תיאום'
         : manualStatus === 'cancelled' ? 'האימון סומן כבוטל'
         : 'הסימון בוטל — הסטטוס נגזר מהבקשות');
     },
 
     createCoordination: async (posting, data) => {
-      const coord = {
-        id: uid(),
+      // הלקוח מחשב את שדות התיאור מהפרסום; השרת מייצר id וקובע את שדות
+      // הסטטוס/המבנה (requestStatus='pending' וכו') — לא סומכים על הלקוח לאלה.
+      const coordData = {
         postId: posting.id,
         postType: posting.type,
         requestedByType: data.requestedByType,
@@ -2252,75 +2187,54 @@ export default function App() {
         airSupportType: posting.airSupportType || null,
         areas: postingAreas(posting),
         space: postingSpace(posting),
-        coordinationStatus: 'initial_coordination_done',
-        requestStatus: 'pending', // בקשה חדשה נכנסת כ"ממתינה" — לא מעבירה את האימון ל"בתהליך"
-        trainingExecutionStatus: 'pending',
-        completedAt: null,
-        cancellationReason: null,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
       };
-      // כתיבה אחת בלבד — סטטוס האימון נגזר מהבקשות, אין עדכון סטטוס פרסום כאן.
-      const coordResult = await mutateCoords(list => [...list, coord]);
-      if (!coordResult.ok) return;
+      const r = await coordCommand('create', { data: coordData });
+      if (!r.ok) return;
       showToast('בקשת התיאום נשלחה ונשמרה');
     },
 
-    // אישור בקשה עם אכיפת accepted-יחיד על נתונים טריים (בתוך המוטטור), עם retry אחד על 409.
+    // אישור בקשה — אכיפת accepted-יחיד מתבצעת בצד השרת על נתונים טריים.
     acceptRequest: async (coordId) => {
-      const result = await mutateCoords(list => {
-        const target = list.find(c => c.id === coordId);
-        if (!target) return { block: true, reason: 'not_found' };
-        const exists = list.some(c => c.id !== coordId
-          && coordPostId(c) === coordPostId(target)
-          && normalizeRequestStatus(c) === 'accepted');
-        if (exists) return { block: true, reason: 'accepted_exists' };
-        return list.map(c => c.id === coordId ? { ...c, requestStatus: 'accepted', updatedAt: new Date().toISOString() } : c);
-      }, { retryOnConflict: true });
-      if (result.blocked) {
-        if (result.reason === 'accepted_exists') {
+      const r = await coordCommand('accept', { id: coordId });
+      if (r.blocked) {
+        if (r.reason === 'accepted_exists') {
           showToast('כבר קיימת בקשה מאושרת לאימון הזה. יש לדחות או לבטל אותה כדי לאשר בקשה אחרת.');
         } else {
           showToast('הבקשה לא נמצאה (ייתכן שנמחקה). רעננו ונסו שוב.');
         }
         return;
       }
-      if (!result.ok) return; // conflict/שגיאה — ההודעה כבר הוצגה ב-mutateCollection
+      if (!r.ok) return; // conflict/שגיאה — ההודעה כבר הוצגה ב-runCommand
       showToast('הבקשה אושרה');
     },
 
     rejectRequest: async (coordId) => {
-      const result = await mutateCoords(list => list.map(c => c.id === coordId ? { ...c, requestStatus: 'rejected', updatedAt: new Date().toISOString() } : c));
-      if (!result.ok) return;
+      const r = await coordCommand('reject', { id: coordId });
+      if (r.blocked) { showToast('הבקשה לא נמצאה (ייתכן שנמחקה). רעננו ונסו שוב.'); return; }
+      if (!r.ok) return;
       showToast('הבקשה נדחתה');
     },
 
     cancelRequest: async (coordId) => {
-      const result = await mutateCoords(list => list.map(c => c.id === coordId ? { ...c, requestStatus: 'cancelled', updatedAt: new Date().toISOString() } : c));
-      if (!result.ok) return;
+      const r = await coordCommand('cancel', { id: coordId });
+      if (r.blocked) { showToast('הבקשה לא נמצאה (ייתכן שנמחקה). רעננו ונסו שוב.'); return; }
+      if (!r.ok) return;
       showToast('הבקשה בוטלה');
     },
 
-    // מעדכן אך ורק את שלב התיאום המקצועי (coordinationStatus). מנותק לחלוטין
-    // מסטטוס האימון — אינו כותב posting.status / coordState / manualStatus.
+    // מעדכן אך ורק את שלב התיאום המקצועי (coordinationStatus) של הבקשה. מנותק
+    // לחלוטין מסטטוס האימון — אינו כותב posting.status / coordState / manualStatus.
     updateCoordinationStage: async (coordId, stageKey) => {
-      const coordResult = await mutateCoords(list => list.map(c => c.id === coordId ? { ...c, coordinationStatus: stageKey, updatedAt: new Date().toISOString() } : c));
-      if (!coordResult.ok) return;
+      const r = await coordCommand('setStage', { id: coordId, stageKey });
+      if (r.blocked) { showToast('הבקשה לא נמצאה (ייתכן שנמחקה). רעננו ונסו שוב.'); return; }
+      if (!r.ok) return;
       showToast('שלב התיאום עודכן');
     },
 
     updateExecutionStatus: async (coordId, execStatus, cancellationReason) => {
-      const result = await mutateCoords(list => list.map(c => {
-        if (c.id !== coordId) return c;
-        return {
-          ...c,
-          trainingExecutionStatus: execStatus,
-          completedAt: execStatus === 'completed' ? new Date().toISOString() : c.completedAt,
-          cancellationReason: execStatus === 'cancelled' ? cancellationReason : c.cancellationReason,
-          updatedAt: new Date().toISOString(),
-        };
-      }));
-      if (!result.ok) return;
+      const r = await coordCommand('setExec', { id: coordId, execStatus, cancellationReason });
+      if (r.blocked) { showToast('הבקשה לא נמצאה (ייתכן שנמחקה). רעננו ונסו שוב.'); return; }
+      if (!r.ok) return;
       showToast('סטטוס הביצוע עודכן');
     },
   };
