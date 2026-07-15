@@ -2,9 +2,9 @@ import NextAuth from 'next-auth';
 import Google from 'next-auth/providers/google';
 import Resend from 'next-auth/providers/resend';
 import { UpstashRedisAdapter } from '@auth/upstash-redis-adapter';
-import { redis } from './lib/redis';
-import { ensureProfileOnSignIn, getProfile } from './lib/users';
-import { resolveAccess } from './lib/authz';
+import { redis } from './lib/redis.js';
+import { ensureProfileOnSignIn, getProfile } from './lib/users.js';
+import { resolveAccess } from './lib/authz.js';
 
 // קונפיגורציית Auth.js (NextAuth v5). זהות בלבד; ה-authorization (approval/
 // ownerId) הוא לוגיקה שלנו ב-Redis, נבדק טרי בכל בקשה.

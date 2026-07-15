@@ -1,37 +1,54 @@
 import { NextResponse } from 'next/server';
+import { auth } from '../../../auth';
 import { readCollection, mutateCollectionServer } from '../../../lib/collection';
+import { canCreate, canActAsPostingOwner } from '../../../lib/authz';
 import {
-  COORD_STAGE_KEYS, EXEC_STATUS_KEYS,
-  mutatorCreate, mutatorAccept, mutatorSetRequestStatus, mutatorSetStage, mutatorSetExec,
+  COORD_STAGE_KEYS, EXEC_STATUS_KEYS, coordPostId,
+  mutatorCreate, mutatorAccept, mutatorSetRequestStatus, mutatorSetStage, mutatorSetExec, mutatorCancelOwned,
 } from '../../../lib/coord';
 
 export const dynamic = 'force-dynamic';
 
 const DATA_KEY = 'coordination-requests';
 const REV_KEY = 'coordination-requests:rev';
+const POSTINGS_KEY = 'postings';
+const POSTINGS_REV = 'postings:rev';
 
 const uid = () =>
   (globalThis.crypto && globalThis.crypto.randomUUID)
     ? globalThis.crypto.randomUUID()
     : 'id-' + Date.now() + '-' + Math.random().toString(16).slice(2);
 
+const forbidden = () => NextResponse.json({ ok: false, error: 'אין הרשאה' }, { status: 403 });
+
 function respond(result, extra = {}) {
-  if (result.status === 'ok') {
-    return NextResponse.json({ ok: true, value: result.value, rev: result.rev, ...extra });
-  }
+  if (result.status === 'ok') return NextResponse.json({ ok: true, value: result.value, rev: result.rev, ...extra });
   if (result.status === 'blocked') {
     return NextResponse.json({ ok: false, blocked: true, reason: result.reason }, { status: result.httpStatus });
   }
   if (result.status === 'conflict') {
-    return NextResponse.json(
-      { ok: false, conflict: true, error: 'הנתונים השתנו במכשיר אחר. נסו שוב.' },
-      { status: 409 }
-    );
+    return NextResponse.json({ ok: false, conflict: true, error: 'הנתונים השתנו במכשיר אחר. נסו שוב.' }, { status: 409 });
   }
   return NextResponse.json({ ok: false, error: result.message || 'שגיאת שרת' }, { status: 500 });
 }
 
+// פעולות בעל-האימון (accept/reject/setStage/setExec): הבעלות נקבעת לפי בעל
+// *הפרסום* שהבקשה מפנה אליו. postId ו-ownerId הם שדות בלתי-משתנים, לכן בדיקה
+// מול קריאה טרייה שלהם בטוחה (אין TOCTOU על בעלות). מחזיר null אם מותר, או
+// תשובת שגיאה (404/403) אם לא.
+async function checkPostingOwnerForCoord(id, access, userId) {
+  const { value: coords } = await readCollection(DATA_KEY, REV_KEY);
+  const coord = coords.find(c => c.id === id);
+  if (!coord) return NextResponse.json({ ok: false, blocked: true, reason: 'not_found' }, { status: 404 });
+  const { value: postings } = await readCollection(POSTINGS_KEY, POSTINGS_REV);
+  const posting = postings.find(p => p.id === coordPostId(coord));
+  if (!canActAsPostingOwner(access, userId, posting)) return forbidden();
+  return null;
+}
+
 export async function GET() {
+  const session = await auth();
+  if (!session?.access?.canUse) return forbidden();
   try {
     const { value, rev } = await readCollection(DATA_KEY, REV_KEY);
     return NextResponse.json({ value, rev });
@@ -41,24 +58,29 @@ export async function GET() {
   }
 }
 
-// endpoints ממוקדי-פעולה. השרת מבצע את המוטציה על נתונים טריים ושולט בשדות
-// המבניים/הסטטוס — כך שבהמשך ניתן לאכוף בעלות פר-רשומה בבטחה. לוגיקת המוטטורים
-// (כולל אכיפת accepted-היחיד) יושבת ב-lib/coord ונבדקת שם ישירות.
 export async function POST(request) {
+  const session = await auth();
+  const access = session?.access;
+  const userId = session?.userId;
+  if (!access?.canUse) return forbidden();
+
   try {
     const body = await request.json();
     const op = body?.op;
 
     if (op === 'create') {
+      if (!canCreate(access)) return forbidden();
       const data = body?.data;
       if (!data || typeof data !== 'object' || Array.isArray(data)) {
         return NextResponse.json({ ok: false, error: 'נתוני בקשה לא תקינים' }, { status: 400 });
       }
       const now = new Date().toISOString();
-      // השרת שולט בשדות המבניים והסטטוס — בקשה חדשה נכנסת תמיד כ-pending.
+      // requesterId מה-session, לא מהלקוח. סטטוס נכפה ל-pending.
       const coord = {
         ...data,
         id: uid(),
+        requesterId: userId,
+        requesterName: session.user?.name || null,
         coordinationStatus: 'initial_coordination_done',
         requestStatus: 'pending',
         trainingExecutionStatus: 'pending',
@@ -71,40 +93,43 @@ export async function POST(request) {
       return respond(result, { id: coord.id });
     }
 
-    // שאר הפעולות פועלות על בקשה קיימת לפי id.
     const id = body?.id;
-    if (typeof id !== 'string') {
-      return NextResponse.json({ ok: false, error: 'מזהה בקשה חסר' }, { status: 400 });
+    if (typeof id !== 'string') return NextResponse.json({ ok: false, error: 'מזהה בקשה חסר' }, { status: 400 });
+
+    if (op === 'cancel') {
+      // ביטול — בעלות requesterId, נאכפת בתוך המוטטור על נתונים טריים.
+      const result = await mutateCollectionServer(DATA_KEY, REV_KEY, mutatorCancelOwned(id, access, userId));
+      return respond(result);
     }
 
+    // מכאן — פעולות בעל-האימון בלבד.
     if (op === 'accept') {
-      const result = await mutateCollectionServer(DATA_KEY, REV_KEY, mutatorAccept(id));
-      return respond(result);
+      const deny = await checkPostingOwnerForCoord(id, access, userId);
+      if (deny) return deny;
+      return respond(await mutateCollectionServer(DATA_KEY, REV_KEY, mutatorAccept(id)));
     }
 
-    if (op === 'reject' || op === 'cancel') {
-      const newStatus = op === 'reject' ? 'rejected' : 'cancelled';
-      const result = await mutateCollectionServer(DATA_KEY, REV_KEY, mutatorSetRequestStatus(id, newStatus));
-      return respond(result);
+    if (op === 'reject') {
+      const deny = await checkPostingOwnerForCoord(id, access, userId);
+      if (deny) return deny;
+      return respond(await mutateCollectionServer(DATA_KEY, REV_KEY, mutatorSetRequestStatus(id, 'rejected')));
     }
 
     if (op === 'setStage') {
       const stageKey = body?.stageKey;
-      if (!COORD_STAGE_KEYS.includes(stageKey)) {
-        return NextResponse.json({ ok: false, error: 'שלב תיאום לא תקין' }, { status: 400 });
-      }
-      const result = await mutateCollectionServer(DATA_KEY, REV_KEY, mutatorSetStage(id, stageKey));
-      return respond(result);
+      if (!COORD_STAGE_KEYS.includes(stageKey)) return NextResponse.json({ ok: false, error: 'שלב תיאום לא תקין' }, { status: 400 });
+      const deny = await checkPostingOwnerForCoord(id, access, userId);
+      if (deny) return deny;
+      return respond(await mutateCollectionServer(DATA_KEY, REV_KEY, mutatorSetStage(id, stageKey)));
     }
 
     if (op === 'setExec') {
       const execStatus = body?.execStatus;
       const cancellationReason = body?.cancellationReason;
-      if (!EXEC_STATUS_KEYS.includes(execStatus)) {
-        return NextResponse.json({ ok: false, error: 'סטטוס ביצוע לא תקין' }, { status: 400 });
-      }
-      const result = await mutateCollectionServer(DATA_KEY, REV_KEY, mutatorSetExec(id, execStatus, cancellationReason));
-      return respond(result);
+      if (!EXEC_STATUS_KEYS.includes(execStatus)) return NextResponse.json({ ok: false, error: 'סטטוס ביצוע לא תקין' }, { status: 400 });
+      const deny = await checkPostingOwnerForCoord(id, access, userId);
+      if (deny) return deny;
+      return respond(await mutateCollectionServer(DATA_KEY, REV_KEY, mutatorSetExec(id, execStatus, cancellationReason)));
     }
 
     return NextResponse.json({ ok: false, error: 'פעולה לא מוכרת' }, { status: 400 });

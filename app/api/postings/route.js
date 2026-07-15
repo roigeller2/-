@@ -1,5 +1,8 @@
 import { NextResponse } from 'next/server';
+import { auth } from '../../../auth';
 import { readCollection, mutateCollectionServer } from '../../../lib/collection';
+import { canCreate } from '../../../lib/authz';
+import { mutatorCreatePosting, mutatorSetTrainingOverride } from '../../../lib/posting';
 
 export const dynamic = 'force-dynamic';
 
@@ -11,24 +14,22 @@ const uid = () =>
     ? globalThis.crypto.randomUUID()
     : 'id-' + Date.now() + '-' + Math.random().toString(16).slice(2);
 
-// ממיר תוצאת mutateCollectionServer לתשובת HTTP אחידה.
+const forbidden = () => NextResponse.json({ ok: false, error: 'אין הרשאה' }, { status: 403 });
+
 function respond(result, extra = {}) {
-  if (result.status === 'ok') {
-    return NextResponse.json({ ok: true, value: result.value, rev: result.rev, ...extra });
-  }
+  if (result.status === 'ok') return NextResponse.json({ ok: true, value: result.value, rev: result.rev, ...extra });
   if (result.status === 'blocked') {
     return NextResponse.json({ ok: false, blocked: true, reason: result.reason }, { status: result.httpStatus });
   }
   if (result.status === 'conflict') {
-    return NextResponse.json(
-      { ok: false, conflict: true, error: 'הנתונים השתנו במכשיר אחר. נסו שוב.' },
-      { status: 409 }
-    );
+    return NextResponse.json({ ok: false, conflict: true, error: 'הנתונים השתנו במכשיר אחר. נסו שוב.' }, { status: 409 });
   }
   return NextResponse.json({ ok: false, error: result.message || 'שגיאת שרת' }, { status: 500 });
 }
 
 export async function GET() {
+  const session = await auth();
+  if (!session?.access?.canUse) return forbidden();
   try {
     const { value, rev } = await readCollection(DATA_KEY, REV_KEY);
     return NextResponse.json({ value, rev });
@@ -38,41 +39,47 @@ export async function GET() {
   }
 }
 
-// endpoints ממוקדי-פעולה. השרת מבצע את המוטציה על נתונים טריים (לא מקבל
-// collection שלמה מהלקוח), כך שבהמשך ניתן יהיה לאכוף בעלות פר-רשומה בבטחה.
 export async function POST(request) {
+  const session = await auth();
+  const access = session?.access;
+  const userId = session?.userId;
+  if (!access?.canUse) return forbidden();
+
   try {
     const body = await request.json();
     const op = body?.op;
 
     if (op === 'create') {
+      if (!canCreate(access)) return forbidden();
       const data = body?.data;
       if (!data || typeof data !== 'object' || Array.isArray(data)) {
         return NextResponse.json({ ok: false, error: 'נתוני פרסום לא תקינים' }, { status: 400 });
       }
-      // השרת שולט בשדות המבניים (id/status/timestamps) — לא סומכים על הלקוח.
       const now = new Date().toISOString();
-      const posting = { ...data, id: uid(), status: 'available', createdAt: now, updatedAt: now };
-      const result = await mutateCollectionServer(DATA_KEY, REV_KEY, list => [...list, posting]);
+      // השרת שולט ב-id/status/timestamps *ובבעלות* — ownerId נלקח מה-session,
+      // לא מהלקוח (spread לפני, ואז דריסה מפורשת).
+      const posting = {
+        ...data,
+        id: uid(),
+        status: 'available',
+        ownerId: userId,
+        ownerName: session.user?.name || null,
+        createdAt: now,
+        updatedAt: now,
+      };
+      const result = await mutateCollectionServer(DATA_KEY, REV_KEY, mutatorCreatePosting(posting));
       return respond(result, { id: posting.id });
     }
 
     if (op === 'setTrainingOverride') {
       const id = body?.id;
       const manualStatus = body?.manualStatus;
-      if (typeof id !== 'string') {
-        return NextResponse.json({ ok: false, error: 'מזהה פרסום חסר' }, { status: 400 });
-      }
+      if (typeof id !== 'string') return NextResponse.json({ ok: false, error: 'מזהה פרסום חסר' }, { status: 400 });
       if (!(manualStatus === 'done' || manualStatus === 'cancelled' || manualStatus === null)) {
         return NextResponse.json({ ok: false, error: 'ערך override לא תקין' }, { status: 400 });
       }
-      const result = await mutateCollectionServer(DATA_KEY, REV_KEY, list => {
-        const target = list.find(p => p.id === id);
-        if (!target) return { block: true, reason: 'not_found', httpStatus: 404 };
-        return list.map(p => p.id === id
-          ? { ...p, manualStatus: manualStatus || undefined, updatedAt: new Date().toISOString() }
-          : p);
-      });
+      // אכיפת הבעלות בתוך המוטטור על נתונים טריים.
+      const result = await mutateCollectionServer(DATA_KEY, REV_KEY, mutatorSetTrainingOverride(id, manualStatus, access, userId));
       return respond(result);
     }
 
