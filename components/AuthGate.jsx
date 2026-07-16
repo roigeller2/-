@@ -16,17 +16,26 @@ function Center({ children }) {
 function LoginScreen() {
   // MVP: Google בלבד. תשתית ה-Magic Link נשמרה בשרת (auth.js) לעתיד, אך אינה
   // נטענת ואינה מוצגת כאן כל עוד משתני Resend אינם מוגדרים.
+  // מסך Hero מלא: תמונת רקע על כל המסך + Overlay כהה + תוכן לבן ממורכז.
+  // UI בלבד — ללא שינוי בלוגיקת ההתחברות.
   return (
-    <Center>
-      <div className="bg-white rounded-2xl border border-slate-200 p-6 text-center">
-        <h1 className="text-lg font-bold text-slate-800 mb-1">מערכת תיאום אימונים משותפים</h1>
-        <p className="text-sm text-slate-500 mb-5">התחברות למערכת</p>
+    <div dir="rtl" lang="he" className="relative min-h-screen w-full overflow-hidden"
+      style={{ fontFamily: "'Heebo', system-ui, sans-serif" }}>
+      {/* תמונת רקע מלאה */}
+      <img src="/login-hero.jpg" alt="" aria-hidden="true"
+        className="absolute inset-0 h-full w-full object-cover" />
+      {/* שכבת Overlay כהה לקריאוּת */}
+      <div className="absolute inset-0 bg-black/50" />
+      {/* תוכן ממורכז אופקית ואנכית */}
+      <div className="relative z-10 flex min-h-screen flex-col items-center justify-center px-6 text-center text-white">
+        <h1 className="mb-2 text-2xl font-bold drop-shadow-md md:text-3xl">מערכת תיאום אימונים משותפים</h1>
+        <p className="mb-8 text-base text-white/85 drop-shadow md:text-lg">התחברות למערכת</p>
         <button onClick={() => signIn('google')}
-          className="w-full bg-slate-900 text-white font-bold py-3 rounded-xl">
+          className="w-full max-w-xs rounded-2xl bg-slate-900 py-4 text-lg font-bold text-white shadow-xl transition hover:bg-slate-800 active:scale-[0.99]">
           התחברות עם Google
         </button>
       </div>
-    </Center>
+    </div>
   );
 }
 
