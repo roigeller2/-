@@ -213,6 +213,19 @@ function AdminUsersScreen({ onBack }) {
         ) : (
           <div className="space-y-2">
             {users.map(u => {
+              // Admin (נגזר בשרת מ-ADMIN_EMAILS): מוצג כ"מנהל", בלי אזור
+              // "דרך מי הגיע אלינו", בלי תווית "טרם השלים", ובלי פעולות סטטוס.
+              if (u.isAdmin) {
+                return (
+                  <div key={u.userId} className="bg-white border border-slate-200 rounded-xl p-3">
+                    <div className="font-bold text-sm text-slate-800">{u.name || u.email || u.userId}</div>
+                    <div className="text-xs text-slate-500">{u.email}</div>
+                    <div className="flex items-center gap-2 mt-2 flex-wrap">
+                      <span className="text-[11px] bg-sky-100 text-sky-800 rounded-full px-2 py-0.5 font-bold">מנהל</span>
+                    </div>
+                  </div>
+                );
+              }
               const info = referralInfo(u);
               const infoCls = info.kind === 'incomplete' ? 'text-amber-700' : info.kind === 'legacy' ? 'text-slate-400' : 'text-slate-700';
               const incompletePending = u.approvalStatus === 'pending' && !u.onboardingCompletedAt;
@@ -279,7 +292,6 @@ export default function AuthGate() {
   if (status === 'unauthenticated' || !session) return <LoginScreen />;
 
   const st = session.access?.approvalStatus;
-  const isAdmin = !!session.access?.isAdmin;
   const onboarded = !!session.access?.onboarded || justOnboarded;
   const email = session.user?.email;
 
@@ -287,10 +299,10 @@ export default function AuthGate() {
   if (st === 'rejected') return <StateScreen title="הבקשה נדחתה" subtitle="בקשת הגישה שלך נדחתה. פנה למנהל המערכת." email={email} tone="rose" />;
   if (st === 'disabled') return <StateScreen title="החשבון הושבת" subtitle="הגישה שלך הושבתה. פנה למנהל המערכת." email={email} tone="slate" />;
 
-  // מסך חובה: לכל pending שטרם השלים, ול-Admin approved שטרם השלים (פעם אחת).
-  // משתמש רגיל שכבר approved (legacy, ללא שדות onboarding) אינו נחסם — הוא אינו
-  // pending ואינו Admin, ולכן ממשיך ישירות לאפליקציה.
-  if (!onboarded && (st === 'pending' || isAdmin)) {
+  // מסך חובה: רק למשתמש pending שטרם השלים onboarding. Admin מדלג לחלוטין —
+  // הוא approved דרך ADMIN_EMAILS ונכנס ישירות לאפליקציה, בלי onboarding ובלי
+  // "ממתין לאישור". משתמש רגיל שכבר approved (legacy) גם הוא אינו נחסם.
+  if (!onboarded && st === 'pending') {
     return <OnboardingScreen email={email} onDone={() => setJustOnboarded(true)} />;
   }
 
