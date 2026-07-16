@@ -2,6 +2,20 @@
 
 החלטות ארכיטקטוניות מרכזיות ונימוקיהן. מהחדש לישן.
 
+## D-13 — onboarding "דרך מי הגעת אלינו?": חובה, אכיפת שרת, נעילה מפורשת (גרסה 14)
+**החלטה:** שדה חובה יחיד בהצטרפות. `onboardingCompletedAt` (נקבע פעם אחת) הוא
+סמן ההשלמה; `session.access.onboarded` נגזר ממנו בשרת (שום מידע נוסף לא נכנס
+ל-session). הרשאת עריכה מפורשת ב-`setReferral`: pending יכול למלא/לערוך;
+Admin ממלא פעם אחת (כל עוד `onboardingCompletedAt` חסר); approved-רגיל/
+rejected/disabled נעולים. `setApprovalStatus` חוסם מעבר ל-approved ללא
+השלמה. השער בודק onboarded *לפני* ניתוב-הסטטוס, כך שגם Admin נדרש פעם אחת,
+אך rejected/disabled ו-approved-ותיק אינם נחסמים.
+**נימוק:** ההכרעה חייבת להיות בשרת (ה-UI אינו אבטחה); חותמת זמן נפרדת מפרידה
+"נוצר" מ"הושלם" ותשמש טריגר ל-`user_pending` ב-N2. נעילה מפורשת-לפי-סטטוס
+(במקום "נעול כש-completed וגם approved") מונעת עריכה ע"י rejected/disabled,
+ומאפשרת ל-Admin (approved אוטומטית) למלא בכל זאת פעם אחת. חשיפת שני שדות בלבד
+ב-GET עצמי (במקום referralSource ב-session) שומרת על session רזה ובלי PII מיותר.
+
 ## D-12 — התראות: fan-out per-user, best-effort, id דטרמיניסטי (N1)
 **החלטה:** התראות נשמרות ב-Hash נפרד לכל משתמש (`notif:{userId}`), נוצרות
 בשרת בלבד אחרי הצלחת ה-CAS העסקי, best-effort (כשל אינו מכשיל את הפעולה),

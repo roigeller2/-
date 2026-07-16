@@ -24,6 +24,11 @@
     הצלחת המוטציה, best-effort, `id` דטרמיניסטי, אחסון Hash נפרד לכל משתמש.
   - `GET`/`POST(markRead/markAllRead)` תחת `/api/notifications`.
   - פעמון + Badge + פאנל, Polling 60ש' + focus; בלי מייל/Push/העדפות.
+- **"דרך מי הגעת אלינו?" (onboarding).** נפרס, ממתין לאימות ידני בפרודקשן (גרסה 14).
+  - `referralSource` + `onboardingCompletedAt` בפרופיל; מסך חובה בהצטרפות;
+    עריכה ל-pending; Admin ממלא פעם אחת. אכיפה בשרת (`setReferral`,
+    `setApprovalStatus` חוסם approve ללא onboarding). תצוגה + חסימת אישור
+    ב-Admin; משתמשים approved ותיקים אינם מושפעים.
 
 ## הבא בתור
 
@@ -33,9 +38,8 @@
 ## שלבים עתידיים (סדר לא סופי)
 
 - **N2 — הרחבת ההתראות.** (טרם מומש) `request_cancelled` (לבעל האימון),
-  `training_cancelled` (ליוצר הבקשה שאושרה), `user_pending` (לכל Admin).
-- **"דרך מי הגעת אלינו?"** (טרם מומש) שדה חובה במסך ההצטרפות הראשוני; אכיפה
-  בשרת ב-`admin/users setStatus`; יוצג ל-Admin ובעתיד בהתראת `user_pending`.
+  `training_cancelled` (ליוצר הבקשה שאושרה), `user_pending` (לכל Admin — רק
+  לאחר השלמת ה-onboarding, ותכלול את התשובה "דרך מי הגעת אלינו?").
 - **שלב 2B — ניקוי ואיחוד.** (טרם התחיל; מחכה לאישור)
   - הסרה/איחוד סופיים של הציר הכפול הישן (`POSTING_STATUS` מול הסטטוס הנגזר).
   - טיפול ב-`EXEC_STATUS` (סטטוס ביצוע) ובשדות הישנים שאינם מניעים עוד לוגיקה.

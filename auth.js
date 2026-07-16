@@ -44,6 +44,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       const profile = await getProfile(user.id);
       session.userId = user.id;
       session.access = resolveAccess(profile, user.email, process.env.ADMIN_EMAILS);
+      // דגל השלמת ה-onboarding ("דרך מי הגעת אלינו?"), נגזר בשרת מהפרופיל.
+      session.access.onboarded = !!profile?.onboardingCompletedAt;
       return session;
     },
   },
