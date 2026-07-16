@@ -3,7 +3,7 @@ import Google from 'next-auth/providers/google';
 import Resend from 'next-auth/providers/resend';
 import { UpstashRedisAdapter } from '@auth/upstash-redis-adapter';
 import { redis } from './lib/redis.js';
-import { ensureProfileOnSignIn, getProfile } from './lib/users.js';
+import { ensureProfileOnSignIn } from './lib/users.js';
 import { resolveAccess } from './lib/authz.js';
 
 // ה-MVP הנוכחי: Google בלבד. תשתית ה-Magic Link (Resend) נשמרת אופציונלית
@@ -33,15 +33,20 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   providers,
   session: { strategy: 'database' },
   callbacks: {
-    // נוצר פרופיל הרשאה (pending) בכניסה הראשונה. אידמפוטנטי.
-    async signIn({ user }) {
-      if (user?.id) await ensureProfileOnSignIn(user.id, user.email, user.name);
+    // חשוב: לא יוצרים כאן פרופיל. בכניסה ראשונה של משתמש חדש, ה-user שמגיע
+    // ל-signIn הוא אובייקט הספק (Google), ו-user.id שלו הוא מזהה-הספק (sub) —
+    // *לא* מזהה ה-DB. ה-adapter מייצר UUID נפרד ל-DB. יצירה כאן הייתה יוצרת
+    // פרופיל תחת מזהה שגוי (sub) שלא תואם ל-session.userId (UUID). לכן היצירה
+    // עברה ל-session callback, שם user.id הוא מזהה ה-DB.
+    async signIn() {
       return true;
     },
-    // מצרפים לסשן את מצב הגישה — נקרא טרי מ-Redis בכל בקשה (approval/admin
-    // אינם נסמכים על snapshot; השבתה תופסת מיד).
+    // get-or-create אידמפוטנטי תחת מזהה ה-DB (user.id = UUID) — מבטיח שהפרופיל
+    // קיים תחת אותו מזהה שבו משתמשים session.userId ו-setReferral, ואינו דורס
+    // פרופיל קיים. מחזיר את הפרופיל ומשתמשים בו ישירות (בלי getProfile נוסף).
+    // ההרשאה (approval/admin/onboarded) נקראת טרייה מ-Redis בכל בקשה.
     async session({ session, user }) {
-      const profile = await getProfile(user.id);
+      const profile = await ensureProfileOnSignIn(user.id, user.email, user.name);
       session.userId = user.id;
       session.access = resolveAccess(profile, user.email, process.env.ADMIN_EMAILS);
       // דגל השלמת ה-onboarding ("דרך מי הגעת אלינו?"), נגזר בשרת מהפרופיל.
