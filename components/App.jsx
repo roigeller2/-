@@ -723,8 +723,14 @@ function Dashboard({ postings, coordRequests, go }) {
         <img src="/login-hero.jpg" alt="" aria-hidden="true" className="absolute inset-0 h-full w-full object-cover" />
         <div className="absolute inset-0 bg-black/55" />
         <div className="relative z-10 text-white px-4 pt-5 pb-6">
-          <p className="text-slate-200 text-sm mb-1 drop-shadow">מערכת תיאום אימונים משותפים</p>
-          <h2 className="text-xl font-bold mb-4 drop-shadow">מסוקים ⇄ כוחות קרקעיים · {REGION}</h2>
+          {/* טקסט Hero ממורכז. "אוגדות המרכז" הוא טקסט תצוגה במסך הבית בלבד —
+              הקבוע REGION אינו משתנה (הוא משמש בפרטי פרסום, בשדה הנשמר ובייצוא). */}
+          <p className="text-slate-200 text-sm mb-1 drop-shadow text-center">מערכת תיאום אימונים משותפים</p>
+          <h2 className="text-xl font-bold mb-4 drop-shadow text-center leading-snug">
+            מסוקים ⇄ כוחות קרקעיים
+            <br />
+            אוגדות המרכז
+          </h2>
           <div className="grid grid-cols-4 gap-2">
             <div className="bg-white/15 border border-white/10 backdrop-blur-sm rounded-xl p-2.5 text-center">
               <div className="text-xl font-bold">{stats.heliAvailable}</div>
@@ -747,15 +753,15 @@ function Dashboard({ postings, coordRequests, go }) {
       </div>
 
       <div className="px-4 mt-5 grid grid-cols-2 gap-3">
-        <button onClick={() => go('newHelicopter')} className="bg-sky-700 text-white rounded-2xl p-4 text-right shadow-sm active:scale-[0.98] transition">
+        <button onClick={() => go('newHelicopter')} className="bg-sky-700 text-white rounded-2xl p-4 flex flex-col items-center justify-center text-center shadow-sm active:scale-[0.98] transition">
           <HeliIcon size={26} className="mb-2" />
-          <div className="font-bold text-sm">פרסום חדש</div>
-          <div className="text-xs text-sky-100">טייסת מסוקים</div>
+          <div className="font-bold text-sm">טייסות המסוקים</div>
+          <div className="text-xs text-sky-100">לחץ כאן</div>
         </button>
-        <button onClick={() => go('newGround')} className="text-white rounded-2xl p-4 text-right shadow-sm active:scale-[0.98] transition" style={{ backgroundColor: '#556b2f' }}>
+        <button onClick={() => go('newGround')} className="text-white rounded-2xl p-4 flex flex-col items-center justify-center text-center shadow-sm active:scale-[0.98] transition" style={{ backgroundColor: '#556b2f' }}>
           <Users size={22} className="mb-2 text-lime-200" />
-          <div className="font-bold text-sm">פרסום חדש</div>
-          <div className="text-xs text-lime-100">כוח קרקעי</div>
+          <div className="font-bold text-sm">כוח קרקעי</div>
+          <div className="text-xs text-lime-100">לחץ כאן</div>
         </button>
       </div>
 
@@ -785,36 +791,70 @@ function Dashboard({ postings, coordRequests, go }) {
 
 /* ============================== רשימת פרסומים ============================== */
 
+// בורר סינון בבחירה-מרובה בצ'יפים (דפוס אחיד לכל קטגוריות הגאנט, כמו מסנן
+// הטייסות הקיים). selected = מערך ערכים נבחרים; לחיצה על צ'יפ בוחרת/מבטלת (OR
+// בתוך הקטגוריה); "הכל" מנקה את הקטגוריה ומודגש כשאין בחירה. עוטף לשורות במובייל.
+function ChipFilter({ label, options, selected, onToggle, onClear }) {
+  const chipCls = (on) => `px-3 py-1.5 rounded-full text-xs font-bold border transition ${on ? 'bg-slate-900 text-amber-300 border-slate-900' : 'bg-white text-slate-600 border-slate-300'}`;
+  return (
+    <div className="mb-3">
+      <FieldLabel>{label}</FieldLabel>
+      <div className="flex flex-wrap gap-1.5">
+        <button type="button" onClick={onClear} className={chipCls(selected.length === 0)}>הכל</button>
+        {options.map(o => {
+          const on = selected.includes(o.value);
+          return (
+            <button key={o.value} type="button" onClick={() => onToggle(o.value)} className={chipCls(on)}>
+              {on ? '✓ ' : ''}{o.label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function PostingListScreen({ type, postings, coordRequests, go, onBack }) {
   const [view, setView] = useState('gantt'); // ברירת מחדל: גאנט
   const [q, setQ] = useState('');
-  const [statusFilter, setStatusFilter] = useState('all');
-  const [coordStateF, setCoordStateF] = useState('all');
+  const [statusF, setStatusF] = useState([]);
+  const [coordStateF, setCoordStateF] = useState([]);
   const [dateFrom, setDateFrom] = useState('');
-  const [spaceF, setSpaceF] = useState('all');
-  const [areaF, setAreaF] = useState('all');
+  const [spaceF, setSpaceF] = useState([]);
+  const [areaF, setAreaF] = useState([]);
   const [squadronsF, setSquadronsF] = useState([]);
-  const [trainingTypeF, setTrainingTypeF] = useState('all');
-  const [airSupportF, setAirSupportF] = useState('all');
+  const [trainingTypeF, setTrainingTypeF] = useState([]);
+  const [airSupportF, setAirSupportF] = useState([]);
   const [showFilters, setShowFilters] = useState(false);
 
-  const areaOptions = spaceF === 'all' ? ALL_AREAS : (SPACES[spaceF] || []);
+  // כל המסננים הם בחירה-מרובה (מערכים). OR בתוך קטגוריה, AND בין קטגוריות.
+  const toggleIn = (setter) => (val) => setter(a => a.includes(val) ? a.filter(x => x !== val) : [...a, val]);
+  const clearAll = () => { setStatusF([]); setCoordStateF([]); setSpaceF([]); setAreaF([]); setSquadronsF([]); setTrainingTypeF([]); setAirSupportF([]); setDateFrom(''); };
+  const activeCount = statusF.length + coordStateF.length + spaceF.length + areaF.length + squadronsF.length + trainingTypeF.length + airSupportF.length + (dateFrom ? 1 : 0);
 
-  const toggleSquadron = (n) => setSquadronsF(s => s.includes(n) ? s.filter(x => x !== n) : [...s, n]);
+  // אפשרויות (value/label) לכל קטגוריה. "אזור" מציג את כל האזורים תמיד (בלתי-תלוי
+  // במרחב) כדי שבחירה לא "תיעלם" בעת שינוי מרחב; הצירוף בין הקטגוריות מצטבר (AND).
+  const spaceOptions = SPACE_NAMES.map(s => ({ value: s, label: s }));
+  const areaChipOptions = ALL_AREAS.map(a => ({ value: a, label: a }));
+  const coordOptions = Object.entries(COORD_STATE).map(([k, v]) => ({ value: k, label: v.label }));
+  const statusOptions = Object.entries(POSTING_STATUS).map(([k, v]) => ({ value: k, label: v.label }));
+  const trainingOptions = TRAINING_TYPES.map(t => ({ value: t, label: t }));
+  const airOptions = AIR_SUPPORT_TYPES.map(t => ({ value: t, label: t }));
+  const squadronOptions = SQUADRONS.map(s => ({ value: s.number, label: 'טייסת ' + s.number }));
 
   const byPost = useMemo(() => groupCoordsByPost(coordRequests), [coordRequests]);
 
   const list = useMemo(() => {
     return postings
       .filter(p => p.type === type)
-      .filter(p => statusFilter === 'all' || p.status === statusFilter)
-      .filter(p => coordStateF === 'all' || deriveTrainingStatus(p, byPost[p.id] || []) === coordStateF)
+      .filter(p => statusF.length === 0 || statusF.includes(p.status))
+      .filter(p => coordStateF.length === 0 || coordStateF.includes(deriveTrainingStatus(p, byPost[p.id] || [])))
       .filter(p => !dateFrom || postingDate(p) >= dateFrom)
-      .filter(p => spaceF === 'all' || postingSpace(p) === spaceF)
-      .filter(p => areaF === 'all' || postingAreas(p).includes(areaF))
+      .filter(p => spaceF.length === 0 || spaceF.includes(postingSpace(p)))
+      .filter(p => areaF.length === 0 || postingAreas(p).some(a => areaF.includes(a)))
       .filter(p => squadronsF.length === 0 || squadronsF.includes(p.squadronNumber))
-      .filter(p => trainingTypeF === 'all' || p.trainingType === trainingTypeF)
-      .filter(p => airSupportF === 'all' || p.airSupportType === airSupportF)
+      .filter(p => trainingTypeF.length === 0 || trainingTypeF.includes(p.trainingType))
+      .filter(p => airSupportF.length === 0 || airSupportF.includes(p.airSupportType))
       .filter(p => {
         if (!q.trim()) return true;
         const hay = [
@@ -827,7 +867,7 @@ function PostingListScreen({ type, postings, coordRequests, go, onBack }) {
         return hay.includes(q.toLowerCase());
       })
       .sort((a, b) => (postingDate(a) || '9999').localeCompare(postingDate(b) || '9999'));
-  }, [postings, byPost, type, statusFilter, coordStateF, dateFrom, spaceF, areaF, squadronsF, trainingTypeF, airSupportF, q]);
+  }, [postings, byPost, type, statusF, coordStateF, dateFrom, spaceF, areaF, squadronsF, trainingTypeF, airSupportF, q]);
 
   const isHeli = type === 'helicopter';
 
@@ -841,7 +881,7 @@ function PostingListScreen({ type, postings, coordRequests, go, onBack }) {
         </div>
         <div className="mt-2 flex items-center justify-between">
           <button onClick={() => setShowFilters(s => !s)} className="flex items-center gap-1.5 text-sm font-semibold text-slate-600">
-            <Filter size={15} /> סינון {showFilters ? <ChevronDown size={15} /> : <ChevronLeft size={15} />}
+            <Filter size={15} /> סינון{activeCount > 0 ? ` (${activeCount})` : ''} {showFilters ? <ChevronDown size={15} /> : <ChevronLeft size={15} />}
           </button>
           <div className="flex bg-slate-100 rounded-lg p-0.5">
             <button onClick={() => setView('gantt')}
@@ -856,73 +896,21 @@ function PostingListScreen({ type, postings, coordRequests, go, onBack }) {
         </div>
         {showFilters && (
           <div className="mt-2 bg-white p-3 rounded-xl border border-slate-200">
-            {isHeli && (
-              <div className="mb-3">
-                <FieldLabel>טייסות (ניתן לבחור כמה)</FieldLabel>
-                <div className="flex flex-wrap gap-1.5">
-                  {SQUADRONS.map(s => {
-                    const on = squadronsF.includes(s.number);
-                    return (
-                      <button key={s.number} type="button" onClick={() => toggleSquadron(s.number)}
-                        className={`px-3 py-1.5 rounded-full text-xs font-bold border transition ${on ? 'bg-slate-900 text-amber-300 border-slate-900' : 'bg-white text-slate-600 border-slate-300'}`}>
-                        {on ? '✓ ' : ''}טייסת {s.number}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <FieldLabel>מרחב</FieldLabel>
-                <select value={spaceF} onChange={e => { setSpaceF(e.target.value); setAreaF('all'); }} className={inputCls}>
-                  <option value="all">הכל</option>
-                  {SPACE_NAMES.map(s => <option key={s} value={s}>{s}</option>)}
-                </select>
-              </div>
-              <div>
-                <FieldLabel>אזור</FieldLabel>
-                <select value={areaF} onChange={e => setAreaF(e.target.value)} className={inputCls}>
-                  <option value="all">הכל</option>
-                  {areaOptions.map(a => <option key={a} value={a}>{a}</option>)}
-                </select>
-              </div>
-              <div>
-                <FieldLabel>סטטוס תיאום</FieldLabel>
-                <select value={coordStateF} onChange={e => setCoordStateF(e.target.value)} className={inputCls}>
-                  <option value="all">הכל</option>
-                  {Object.entries(COORD_STATE).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
-                </select>
-              </div>
-              <div>
-                <FieldLabel>סטטוס פרסום</FieldLabel>
-                <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} className={inputCls}>
-                  <option value="all">הכל</option>
-                  {Object.entries(POSTING_STATUS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
-                </select>
-              </div>
-              <div>
-                <FieldLabel>מתאריך</FieldLabel>
-                <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className={inputCls} />
-              </div>
-              {!isHeli && (
-                <div>
-                  <FieldLabel>סוג אימון</FieldLabel>
-                  <select value={trainingTypeF} onChange={e => setTrainingTypeF(e.target.value)} className={inputCls}>
-                    <option value="all">הכל</option>
-                    {TRAINING_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
-                  </select>
-                </div>
-              )}
-              {!isHeli && (
-                <div>
-                  <FieldLabel>סוג סיוע מבוקש</FieldLabel>
-                  <select value={airSupportF} onChange={e => setAirSupportF(e.target.value)} className={inputCls}>
-                    <option value="all">הכל</option>
-                    {AIR_SUPPORT_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
-                  </select>
-                </div>
-              )}
+            {/* שורת סיכום + ניקוי כל הסינונים */}
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-semibold text-slate-500">{activeCount > 0 ? `${activeCount} מסננים פעילים` : 'אין סינון פעיל'}</span>
+              {activeCount > 0 && <button type="button" onClick={clearAll} className="text-xs font-bold text-sky-700">נקה הכול</button>}
+            </div>
+            {isHeli && <ChipFilter label="טייסות" options={squadronOptions} selected={squadronsF} onToggle={toggleIn(setSquadronsF)} onClear={() => setSquadronsF([])} />}
+            <ChipFilter label="מרחב" options={spaceOptions} selected={spaceF} onToggle={toggleIn(setSpaceF)} onClear={() => setSpaceF([])} />
+            <ChipFilter label="אזור" options={areaChipOptions} selected={areaF} onToggle={toggleIn(setAreaF)} onClear={() => setAreaF([])} />
+            <ChipFilter label="סטטוס תיאום" options={coordOptions} selected={coordStateF} onToggle={toggleIn(setCoordStateF)} onClear={() => setCoordStateF([])} />
+            <ChipFilter label="סטטוס פרסום" options={statusOptions} selected={statusF} onToggle={toggleIn(setStatusF)} onClear={() => setStatusF([])} />
+            {!isHeli && <ChipFilter label="סוג אימון" options={trainingOptions} selected={trainingTypeF} onToggle={toggleIn(setTrainingTypeF)} onClear={() => setTrainingTypeF([])} />}
+            {!isHeli && <ChipFilter label="סוג סיוע מבוקש" options={airOptions} selected={airSupportF} onToggle={toggleIn(setAirSupportF)} onClear={() => setAirSupportF([])} />}
+            <div className="mb-1">
+              <FieldLabel>מתאריך</FieldLabel>
+              <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className={inputCls} />
             </div>
           </div>
         )}
