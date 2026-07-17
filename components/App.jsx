@@ -512,7 +512,6 @@ function TrainingWindowEditor({ windows, onChange }) {
                   <div><FieldLabel>משך כל חלון (דק')</FieldLabel><input type="number" min="1" value={w.durationMinutes} onChange={e => update(w.id, { durationMinutes: e.target.value })} className={inputCls} /></div>
                   <div><FieldLabel>מספר חלונות</FieldLabel><input type="number" min="1" value={w.windowsCount} onChange={e => update(w.id, { windowsCount: e.target.value })} className={inputCls} /></div>
                 </div>
-                <div className="mb-2"><FieldLabel>הערות לחלון</FieldLabel><textarea rows={2} value={w.notes} onChange={e => update(w.id, { notes: e.target.value })} className={inputCls} /></div>
                 <div className="flex justify-between items-center">
                   {windows.length > 1 ? (
                     <button type="button" onClick={() => remove(w.id)} className="text-rose-600 text-xs font-bold">מחק חלון</button>
@@ -834,7 +833,7 @@ function PostingListScreen({ type, postings, coordRequests, go, onBack }) {
 
   return (
     <div className="pb-6">
-      <Header title={isHeli ? 'אימוני מסוקים' : 'אימוני כוחות'} onBack={onBack} tone={isHeli ? 'heli' : 'ground'} />
+      <Header title={isHeli ? 'גאנט האימונים של המסוקים' : 'גאנט האימונים של הכוחות'} onBack={onBack} tone={isHeli ? 'heli' : 'ground'} />
       <div className="px-4 pt-4 sticky top-[57px] z-10 bg-slate-50 pb-3">
         <div className="relative">
           <Search size={17} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -1526,10 +1525,12 @@ function NewPostingScreen({ initialType, onBack, actions, go }) {
           <textarea value={description} onChange={e => setDescription(e.target.value)} rows={2} className={inputCls} />
         </div>
 
-        <div className="mb-4">
-          <FieldLabel>הערות</FieldLabel>
-          <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={2} className={inputCls} />
-        </div>
+        {isHeli && (
+          <div className="mb-4">
+            <FieldLabel>הערות</FieldLabel>
+            <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={2} className={inputCls} />
+          </div>
+        )}
 
         <div className={`grid ${isHeli ? 'grid-cols-1' : 'grid-cols-2'} gap-2 mb-6`}>
           <div>
