@@ -1663,14 +1663,15 @@ function CalendarEventCard({ p, w, go, coordState }) {
           ? (SQUADRON_TYPE_LABEL[squadronType(p.squadronNumber)] || '')
           : (p.brigade ? 'חטיבת ' + p.brigade : '')}
       </div>
-      {/* כוח קרקעי: גם סוג האימון וגם הסיוע המבוקש, בתמצית, בכל בלוק בגאנט */}
+      {/* כוח קרקעי: סוג האימון והסיוע המבוקש — הערכים בלבד, בלי כותרות. */}
       {!isHeli && p.trainingType && (
-        <div className="text-[8px] text-white/90 leading-tight break-words w-full">סוג: {p.trainingType}</div>
+        <div className="text-[8px] text-white/90 leading-tight break-words w-full">{p.trainingType}</div>
       )}
       {!isHeli && p.airSupportType && (
-        <div className="text-[8px] text-white/90 leading-tight break-words w-full">סיוע: {p.airSupportType}</div>
+        <div className="text-[8px] text-white/90 leading-tight break-words w-full">{p.airSupportType}</div>
       )}
-      {(w.startTime || w.endTime) && (
+      {/* שעות מוצגות רק בבלוקי המסוקים; בגאנט הכוחות אין טווח שעות בכרטיס. */}
+      {isHeli && (w.startTime || w.endTime) && (
         <div className="text-[9px] text-white font-bold leading-tight" dir="ltr">
           {w.startTime || '--:--'}–{w.endTime || '--:--'}
         </div>
