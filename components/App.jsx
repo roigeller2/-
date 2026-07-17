@@ -9,6 +9,7 @@ import {
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
 } from "recharts";
+import { deriveMyTasks, TASK_TYPES } from '../lib/tasks';
 
 function HeliIcon({ size = 16, className = '' }) {
   return (
@@ -646,7 +647,64 @@ function PostingCard({ posting, onClick, coordState }) {
 
 /* ============================== דאשבורד ============================== */
 
+// תצורת תצוגה לכל סוג משימה. שפת צבעים ללא אדום: כתום=דורש פעולה, כחול=מידע/
+// בתהליך. border-r-4 = פס-הדגשה בקצה המוביל (RTL). מחלקות מלאות (לא דינמיות)
+// כדי ש-Tailwind לא יגזום אותן.
+const TASK_UI = {
+  [TASK_TYPES.INCOMING_REQUEST]: { title: 'בקשת תיאום חדשה', border: 'border-r-4 border-amber-400', dot: 'bg-amber-500', tag: null },
+  [TASK_TYPES.TRAINING_TODAY]: { title: 'אימון היום', border: 'border-r-4 border-amber-500', dot: 'bg-amber-600', tag: { label: 'היום', cls: 'bg-amber-500 text-white' } },
+  [TASK_TYPES.TRAINING_TOMORROW]: { title: 'אימון מחר', border: 'border-r-4 border-amber-300', dot: 'bg-amber-400', tag: { label: 'מחר', cls: 'bg-amber-100 text-amber-700' } },
+  [TASK_TYPES.REQUEST_ACCEPTED]: { title: 'בקשת התיאום שלך אושרה', border: 'border-r-4 border-sky-400', dot: 'bg-sky-500', tag: null },
+};
+
+function TaskCard({ task, postings, go }) {
+  const ui = TASK_UI[task.type];
+  const ctx = task.context;
+  const party = ctx.squadronNumber ? `טייסת ${ctx.squadronNumber}` : (ctx.unitName || ctx.brigade || null);
+  const sub = [party, ctx.trainingDate ? fmtDate(ctx.trainingDate) : null, ctx.area || null].filter(Boolean).join(' · ');
+
+  // ניווט הכרטיס + "פתח": בקשה חדשה → פרטי האימון (שם מאשרים/דוחים); שאר → מסך התיאום.
+  const navTo = () => (task.type === TASK_TYPES.INCOMING_REQUEST
+    ? go('posting', { id: task.postingId })
+    : go('coordination', { id: task.coordId }));
+
+  // WhatsApp רק ל"אושרה" וכשהשולח הוא הצד שיוזם קשר (requestedByType='helicopter'),
+  // בשימוש חוזר ב-buildWhatsAppUrl הקיים (מספר הכוח = contactPhone של הפרסום).
+  let waUrl = null;
+  if (task.type === TASK_TYPES.REQUEST_ACCEPTED && ctx.requestedByType === 'helicopter') {
+    const posting = postings.find(p => p.id === task.postingId);
+    if (posting) waUrl = buildWhatsAppUrl(posting);
+  }
+
+  return (
+    <div onClick={navTo} role="button" tabIndex={0}
+      onKeyDown={(e) => { if (e.key === 'Enter') navTo(); }}
+      className={`bg-white ${ui.border} border border-slate-200 rounded-xl p-3 flex items-center gap-3 cursor-pointer active:scale-[0.99] transition`}>
+      <span className={`shrink-0 w-2.5 h-2.5 rounded-full ${ui.dot}`} aria-hidden="true" />
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="font-bold text-sm text-slate-800">{ui.title}</span>
+          {ui.tag && <span className={`text-[10px] font-bold rounded-full px-1.5 py-0.5 ${ui.tag.cls}`}>{ui.tag.label}</span>}
+        </div>
+        {sub && <div className="text-xs text-slate-500 mt-0.5 truncate">{sub}</div>}
+      </div>
+      {waUrl ? (
+        <a href={waUrl} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()}
+          className="shrink-0 px-3 py-1.5 rounded-lg text-xs font-bold text-white active:scale-[0.98]" style={{ backgroundColor: '#16a34a' }}>
+          WhatsApp
+        </a>
+      ) : (
+        <button onClick={(e) => { e.stopPropagation(); navTo(); }}
+          className="shrink-0 px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-900 text-white active:scale-[0.98]">
+          פתח
+        </button>
+      )}
+    </div>
+  );
+}
+
 function Dashboard({ postings, coordRequests, go }) {
+  const me = useMe();
   const heli = postings.filter(p => p.type === 'helicopter');
   const ground = postings.filter(p => p.type === 'ground');
   const byPost = groupCoordsByPost(coordRequests);
@@ -657,29 +715,34 @@ function Dashboard({ postings, coordRequests, go }) {
     inCoordination: postings.filter(p => stateOf(p) === 'in_process').length,
     completed: postings.filter(p => stateOf(p) === 'done').length,
   };
-  const recent = [...postings].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).slice(0, 5);
+  const myTasks = deriveMyTasks(postings, coordRequests, me);
 
   return (
     <div className="pb-6">
-      <div className="bg-gradient-to-l from-slate-900 to-slate-800 text-white px-4 pt-5 pb-6 rounded-b-3xl">
-        <p className="text-slate-400 text-sm mb-1">מערכת תיאום אימונים משותפים · <span className="text-amber-400 font-bold">{APP_VERSION}</span></p>
-        <h2 className="text-xl font-bold mb-4">מסוקים ⇄ כוחות קרקעיים · {REGION}</h2>
-        <div className="grid grid-cols-4 gap-2">
-          <div className="bg-white/10 rounded-xl p-2.5 text-center">
-            <div className="text-xl font-bold">{stats.heliAvailable}</div>
-            <div className="text-[10px] text-slate-300 mt-0.5">מסוקים פנויים</div>
-          </div>
-          <div className="bg-white/10 rounded-xl p-2.5 text-center">
-            <div className="text-xl font-bold">{stats.groundAvailable}</div>
-            <div className="text-[10px] text-slate-300 mt-0.5">קרקע פנויים</div>
-          </div>
-          <div className="bg-white/10 rounded-xl p-2.5 text-center">
-            <div className="text-xl font-bold">{stats.inCoordination}</div>
-            <div className="text-[10px] text-slate-300 mt-0.5">בתיאום</div>
-          </div>
-          <div className="bg-white/10 rounded-xl p-2.5 text-center">
-            <div className="text-xl font-bold">{stats.completed}</div>
-            <div className="text-[10px] text-slate-300 mt-0.5">הושלמו</div>
+      {/* Hero קומפקטי עם תמונת רקע (login-hero.jpg) + Overlay לקריאות. */}
+      <div className="relative overflow-hidden rounded-b-3xl">
+        <img src="/login-hero.jpg" alt="" aria-hidden="true" className="absolute inset-0 h-full w-full object-cover" />
+        <div className="absolute inset-0 bg-black/55" />
+        <div className="relative z-10 text-white px-4 pt-5 pb-6">
+          <p className="text-slate-200 text-sm mb-1 drop-shadow">מערכת תיאום אימונים משותפים</p>
+          <h2 className="text-xl font-bold mb-4 drop-shadow">מסוקים ⇄ כוחות קרקעיים · {REGION}</h2>
+          <div className="grid grid-cols-4 gap-2">
+            <div className="bg-white/15 border border-white/10 backdrop-blur-sm rounded-xl p-2.5 text-center">
+              <div className="text-xl font-bold">{stats.heliAvailable}</div>
+              <div className="text-[10px] text-slate-100 mt-0.5">מסוקים פנויים</div>
+            </div>
+            <div className="bg-white/15 border border-white/10 backdrop-blur-sm rounded-xl p-2.5 text-center">
+              <div className="text-xl font-bold">{stats.groundAvailable}</div>
+              <div className="text-[10px] text-slate-100 mt-0.5">קרקע פנויים</div>
+            </div>
+            <div className="bg-white/15 border border-white/10 backdrop-blur-sm rounded-xl p-2.5 text-center">
+              <div className="text-xl font-bold">{stats.inCoordination}</div>
+              <div className="text-[10px] text-slate-100 mt-0.5">בתיאום</div>
+            </div>
+            <div className="bg-white/15 border border-white/10 backdrop-blur-sm rounded-xl p-2.5 text-center">
+              <div className="text-xl font-bold">{stats.completed}</div>
+              <div className="text-[10px] text-slate-100 mt-0.5">הושלמו</div>
+            </div>
           </div>
         </div>
       </div>
@@ -697,23 +760,25 @@ function Dashboard({ postings, coordRequests, go }) {
         </button>
       </div>
 
+      {/* המשימות שלי — נגזרות מהמצב החי, אישיות בלבד. מונה תמיד מוצג. */}
+      <div className="px-4 mt-6">
+        <h3 className="font-bold text-slate-800 mb-3">📋 המשימות שלי ({myTasks.length})</h3>
+        {myTasks.length === 0 ? (
+          <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 text-center">
+            <Check size={20} className="text-emerald-600 mx-auto mb-1" />
+            <p className="text-sm font-semibold text-emerald-800">אין משימות פתוחות — הכול מתואם.</p>
+          </div>
+        ) : (
+          <div className="space-y-2.5">
+            {myTasks.map(t => <TaskCard key={t.id} task={t} postings={postings} go={go} />)}
+          </div>
+        )}
+      </div>
+
       <div className="px-4 mt-3">
         <button onClick={() => go('timeline')} className="w-full bg-white border border-slate-200 rounded-2xl p-3.5 flex items-center justify-center gap-2 font-bold text-slate-700 text-sm shadow-sm active:scale-[0.98] transition">
           <CalendarDays size={18} className="text-sky-600" /> תצוגת גאנט — ציר זמן אימונים
         </button>
-      </div>
-
-      <div className="px-4 mt-6">
-        <h3 className="font-bold text-slate-800 mb-3">פרסומים אחרונים</h3>
-        {recent.length === 0 ? (
-          <EmptyState icon={Calendar} title="אין עדיין פרסומים" subtitle="פרסמו הזדמנות אימון ראשונה כדי להתחיל" />
-        ) : (
-          <div className="space-y-3">
-            {recent.map(p => (
-              <PostingCard key={p.id} posting={p} coordState={stateOf(p)} onClick={() => go('posting', { id: p.id })} />
-            ))}
-          </div>
-        )}
       </div>
     </div>
   );
@@ -2319,8 +2384,9 @@ export default function App({ me = { userId: null, isAdmin: false }, navRequest 
 
         {storageState === 'ok' && lastSync && (
           <div className="fixed bottom-[76px] left-2 z-20">
-            <span className="text-[10px] text-slate-400 bg-white/80 rounded-full px-2 py-0.5 border border-slate-200 flex items-center gap-1">
-              <RefreshCw size={9} /> {APP_VERSION} · מסונכרן {lastSync.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })}
+            {/* אינדיקציית סנכרון עדינה בלבד — ללא גרסה/Vercel/אימוג'י. */}
+            <span className="text-[10px] text-slate-400 bg-white/80 rounded-full px-2 py-0.5 border border-slate-200 flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" aria-hidden="true" /> מסונכרן {lastSync.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })}
             </span>
           </div>
         )}
