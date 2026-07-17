@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { auth } from '../../../../auth';
-import { listProfiles, setApprovalStatus } from '../../../../lib/users';
+import { listProfiles, setApprovalStatus, cancelRequest } from '../../../../lib/users';
 import { isAdminEmail } from '../../../../lib/authz';
 
 export const dynamic = 'force-dynamic';
@@ -28,6 +28,20 @@ export async function POST(request) {
   if (!session?.access?.isAdmin) return forbidden();
   try {
     const body = await request.json();
+    // "בטל בקשה" — פעולה נפרדת לגמרי מ-setStatus (אינה מעבר-סטטוס, אינה חוסמת).
+    if (body?.op === 'cancelRequest') {
+      const { userId } = body;
+      if (typeof userId !== 'string') {
+        return NextResponse.json({ ok: false, error: 'פרמטרים חסרים' }, { status: 400 });
+      }
+      const result = await cancelRequest(userId, session.userId);
+      if (!result.ok) {
+        const code = result.reason === 'not_found' ? 404 : 400;
+        return NextResponse.json({ ok: false, error: result.reason, from: result.from }, { status: code });
+      }
+      const users = withAdminFlag(await listProfiles());
+      return NextResponse.json({ ok: true, profile: result.profile, users });
+    }
     if (body?.op !== 'setStatus') return NextResponse.json({ ok: false, error: 'פעולה לא מוכרת' }, { status: 400 });
     const { userId, status } = body;
     if (typeof userId !== 'string' || typeof status !== 'string') {

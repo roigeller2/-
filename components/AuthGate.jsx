@@ -181,28 +181,35 @@ function OnboardingScreen({ email, onDone, mode = 'initial', onCancel }) {
   );
 }
 
-import { USER_BUCKETS, countsByBucket, defaultStatusFilter, filterUsers, sortUsers, formatDMY } from '../lib/adminUsers';
+import { USER_BUCKETS, bucketOf, countsByBucket, defaultStatusFilter, filterUsers, sortUsers, formatDMY } from '../lib/adminUsers';
 
-// פעולות סטטוס לפי הסטטוס השמור (לא-אדמין בלבד). 'danger' מסמן פעולה משמעותית
-// שתדרוש אישור בחלק 3 (דחה/השבת). אין מחיקה — רק מעברי סטטוס.
+// פעולות המנהל לפי הסטטוס השמור (לא-אדמין בלבד). op מזהה את הפעולה:
+//   approve/reject/disable → setStatus ; cancel → cancelRequest (פעולה נפרדת).
+// 'danger' → דורש מודאל אישור. אין מחיקה.
+const OP_STATUS = { approve: 'approved', reject: 'rejected', disable: 'disabled' };
 const ACTIONS_FOR = {
-  pending: [{ to: 'approved', label: 'אשר' }, { to: 'rejected', label: 'דחה', danger: true }],
-  approved: [{ to: 'disabled', label: 'השבת', danger: true }],
-  rejected: [{ to: 'approved', label: 'אשר' }],
-  disabled: [{ to: 'approved', label: 'הפעל מחדש' }],
+  pending: [
+    { op: 'approve', label: 'אשר' },
+    { op: 'reject', label: 'דחה', danger: true },
+    { op: 'cancel', label: 'בטל בקשה', danger: true },
+  ],
+  approved: [{ op: 'disable', label: 'השבת', danger: true }],
+  rejected: [{ op: 'approve', label: 'אשר' }],
+  disabled: [{ op: 'approve', label: 'הפעל מחדש' }],
 };
 
-// תג סטטוס: תווית + צבע עדין. אין אדום מלא כרקע/צבע ראשי (rejected — rose בהיר).
+// תג סטטוס: תווית + צבע עדין (לפי הדלי, כולל "טרם השלים"). אין אדום מלא.
 const STATUS_TAG = {
-  pending: { label: 'ממתין', cls: 'bg-amber-100 text-amber-800' },
+  pending: { label: 'ממתין לאישור', cls: 'bg-amber-100 text-amber-800' },
+  incomplete: { label: 'טרם השלים', cls: 'bg-slate-100 text-slate-600' },
   approved: { label: 'מאושר', cls: 'bg-emerald-100 text-emerald-800' },
   disabled: { label: 'מושבת', cls: 'bg-slate-200 text-slate-600' },
   rejected: { label: 'נדחה', cls: 'bg-rose-50 text-rose-700 border border-rose-200' },
 };
 
 // תוויות ומצבי-ריק לכל דלי במסנן.
-const BUCKET_LABEL = { pending: 'ממתינים', approved: 'מאושרים', disabled: 'מושבתים', rejected: 'נדחו', admins: 'מנהלים', all: 'הכול' };
-const EMPTY_FOR = { pending: 'אין משתמשים ממתינים.', approved: 'אין משתמשים מאושרים.', disabled: 'אין משתמשים מושבתים.', rejected: 'אין משתמשים שנדחו.', admins: 'אין מנהלים.', all: 'אין משתמשים.' };
+const BUCKET_LABEL = { pending: 'ממתינים לאישור', incomplete: 'טרם השלימו', approved: 'מאושרים', disabled: 'מושבתים', rejected: 'נדחו', admins: 'מנהלים', all: 'הכול' };
+const EMPTY_FOR = { pending: 'אין בקשות שממתינות לאישור.', incomplete: 'אין משתמשים שטרם השלימו.', approved: 'אין משתמשים מאושרים.', disabled: 'אין משתמשים מושבתים.', rejected: 'אין משתמשים שנדחו.', admins: 'אין מנהלים.', all: 'אין משתמשים.' };
 const SORT_OPTIONS = [
   { key: 'joined', label: 'הצטרפות (חדש→ישן)' },
   { key: 'name', label: 'שם (א-ת)' },
@@ -210,10 +217,11 @@ const SORT_OPTIONS = [
   { key: 'status', label: 'סטטוס' },
 ];
 
-// טקסטי מודאל האישור לפעולות המשמעותיות (דחה/השבת). ממופה לפי יעד הפעולה.
+// טקסטי מודאל האישור, ממופים לפי op הפעולה.
 const CONFIRM_COPY = {
-  rejected: { title: 'לדחות את המשתמש?', explain: 'המשתמש לא יקבל גישה למערכת.' },
-  disabled: { title: 'להשבית את המשתמש?', explain: 'הגישה תיחסם, אך ההיסטוריה והנתונים שלו יישמרו.' },
+  reject: { title: 'לדחות את המשתמש?', explain: 'המשתמש ייחסם מהגשת בקשת הצטרפות חדשה.' },
+  disable: { title: 'להשבית את המשתמש?', explain: 'הגישה תיחסם, אך ההיסטוריה והנתונים שלו יישמרו.' },
+  cancel: { title: 'לבטל את הבקשה?', explain: 'הבקשה תבוטל. המשתמש לא ייחסם ויוכל להגיש בקשה חדשה בכניסה הבאה.' },
 };
 
 // מודאל אישור לפעולה משמעותית. עצמאי בניהול busy/שגיאה. onConfirm מבצע את
@@ -223,7 +231,7 @@ const CONFIRM_COPY = {
 function ConfirmDialog({ user, action, onCancel, onConfirm }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
-  const copy = CONFIRM_COPY[action.to] || { title: 'לאשר את הפעולה?', explain: '' };
+  const copy = CONFIRM_COPY[action.op] || { title: 'לאשר את הפעולה?', explain: '' };
   const name = user.name || user.email || user.userId;
 
   useEffect(() => {
@@ -274,11 +282,11 @@ function pendingReferral(u) {
 // תאריך הצטרפות · "דרך מי הגיע אלינו" (ממתינים בלבד) · שורת ביקורת עדינה · פעולות.
 function UserCard({ u, onAction }) {
   const isAdmin = !!u.isAdmin;
-  const tag = STATUS_TAG[u.approvalStatus];
+  const tag = STATUS_TAG[bucketOf(u)]; // תג לפי הדלי (כולל "טרם השלים")
   const joined = formatDMY(u.createdAt);
   // ממתין שטרם השלים onboarding — אי אפשר לאשר (חסימת שרת; מוסתר גם בכפתור).
   const incompletePending = !isAdmin && u.approvalStatus === 'pending' && !u.onboardingCompletedAt;
-  const actions = isAdmin ? [] : (ACTIONS_FOR[u.approvalStatus] || []).filter(a => !(incompletePending && a.to === 'approved'));
+  const actions = isAdmin ? [] : (ACTIONS_FOR[u.approvalStatus] || []).filter(a => !(incompletePending && a.op === 'approve'));
   const ref = !isAdmin && u.approvalStatus === 'pending' ? pendingReferral(u) : null;
   return (
     <div className="bg-white border border-slate-200 rounded-xl p-3">
@@ -309,7 +317,7 @@ function UserCard({ u, onAction }) {
       {actions.length > 0 && (
         <div className="flex items-center gap-2 mt-2.5 flex-wrap">
           {actions.map(a => (
-            <button key={a.to} onClick={() => onAction(u, a)}
+            <button key={a.op} onClick={() => onAction(u, a)}
               className={`text-[11px] font-bold rounded-full px-3 py-1 border ${a.danger ? 'border-rose-300 text-rose-700 hover:bg-rose-50' : 'border-slate-300 text-slate-700 hover:bg-slate-50'}`}>
               {a.label}
             </button>
@@ -359,15 +367,28 @@ function AdminUsersScreen({ onBack }) {
     } catch { return { ok: false, error: 'שגיאת רשת. נסו שוב.' }; }
   };
 
+  // "בטל בקשה" — op נפרד בשרת (cancelRequest). מאפס את המשתמש למצב טופס-מחדש.
+  const cancelRequest = async (userId) => {
+    try {
+      const r = await fetch('/api/admin/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op: 'cancelRequest', userId }) });
+      const d = await r.json().catch(() => ({}));
+      if (d.ok) { setUsers(d.users || []); return { ok: true }; }
+      return { ok: false, error: d.error === 'invalid_state' ? 'ניתן לבטל רק בקשה ממתינה.' : 'הפעולה נכשלה. נסו שוב.' };
+    } catch { return { ok: false, error: 'שגיאת רשת. נסו שוב.' }; }
+  };
+
+  // מפעיל את הפעולה לפי ה-op: cancel → cancelRequest, אחרת setStatus.
+  const perform = (userId, a) => (a.op === 'cancel' ? cancelRequest(userId) : setStatus(userId, OP_STATUS[a.op]));
+
   // מסלול ישיר (בלי מודאל): אשר / הפעל מחדש. שגיאה מוצגת בפס ההודעות של המסך.
-  const runDirect = async (userId, status) => {
+  const runDirect = async (userId, a) => {
     setActionMsg('');
-    const res = await setStatus(userId, status);
+    const res = await perform(userId, a);
     if (!res.ok) setActionMsg(res.error);
   };
 
-  // פעולה משמעותית (danger: דחה/השבת) → מודאל אישור. אחרת → ביצוע ישיר.
-  const onAction = (u, a) => { setActionMsg(''); if (a.danger) setConfirm({ u, a }); else runDirect(u.userId, a.to); };
+  // פעולה משמעותית (danger: דחה/השבת/בטל בקשה) → מודאל אישור. אחרת → ביצוע ישיר.
+  const onAction = (u, a) => { setActionMsg(''); if (a.danger) setConfirm({ u, a }); else runDirect(u.userId, a); };
 
   const list = users || [];
   const counts = countsByBucket(list);
@@ -442,7 +463,7 @@ function AdminUsersScreen({ onBack }) {
           user={confirm.u} action={confirm.a}
           onCancel={() => setConfirm(null)}
           onConfirm={async () => {
-            const res = await setStatus(confirm.u.userId, confirm.a.to);
+            const res = await perform(confirm.u.userId, confirm.a);
             if (res.ok) setConfirm(null);
             return res;
           }}
