@@ -72,6 +72,7 @@ function OnboardingScreen({ email, onDone, mode = 'initial', onCancel }) {
   const [err, setErr] = useState('');
   const [loading, setLoading] = useState(isEdit);
   const [loadErr, setLoadErr] = useState(false);
+  const [showEmptyAlert, setShowEmptyAlert] = useState(false); // התרעה קופצת: שדה ריק
   const savingRef = useRef(false);
   const mountedRef = useRef(true);
 
@@ -92,10 +93,19 @@ function OnboardingScreen({ email, onDone, mode = 'initial', onCancel }) {
     return () => { mountedRef.current = false; };
   }, [isEdit, load]);
 
+  // סגירת ההתרעה הקופצת ב-Escape.
+  useEffect(() => {
+    if (!showEmptyAlert) return;
+    const onKey = (e) => { if (e.key === 'Escape') setShowEmptyAlert(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [showEmptyAlert]);
+
   const submit = async () => {
     if (savingRef.current) return; // מניעת שליחה כפולה
     const t = text.trim();
-    if (!t) { setErr('נא למלא את השדה כדי להמשיך.'); return; }
+    // שדה ריק → התרעה קופצת חוסמת; לא ניתן להמשיך בלי מילוי.
+    if (!t) { setShowEmptyAlert(true); return; }
     if (t.length > 300) { setErr('התשובה ארוכה מדי (עד 300 תווים).'); return; }
     setErr('');
     savingRef.current = true;
@@ -153,6 +163,20 @@ function OnboardingScreen({ email, onDone, mode = 'initial', onCancel }) {
           </p>
         )}
       </div>
+
+      {/* התרעה קופצת: ניסיון לשמור בלי למלא את השדה. כפתור "חזרה" סוגר ומחזיר לטופס. */}
+      {showEmptyAlert && (
+        <div dir="rtl" className="fixed inset-0 z-50 flex items-center justify-center px-4"
+          style={{ fontFamily: "'Heebo', system-ui, sans-serif" }}>
+          <div className="absolute inset-0 bg-black/40" onClick={() => setShowEmptyAlert(false)} />
+          <div role="alertdialog" aria-modal="true" className="relative w-full max-w-xs bg-white rounded-2xl border border-slate-200 p-5 shadow-xl text-center">
+            <div className="text-3xl mb-2" aria-hidden="true">⚠️</div>
+            <p className="text-sm font-bold text-slate-800 mb-4">לא ניתן להמשיך ללא מילוי השדה "דרך מי הגעת אלינו".</p>
+            <button onClick={() => setShowEmptyAlert(false)}
+              className="w-full bg-slate-900 text-white font-bold py-2.5 rounded-xl">חזרה</button>
+          </div>
+        </div>
+      )}
     </Center>
   );
 }
