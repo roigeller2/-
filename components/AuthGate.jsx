@@ -187,6 +187,8 @@ import { USER_BUCKETS, bucketOf, countsByBucket, defaultStatusFilter, filterUser
 //   approve/reject/disable → setStatus ; cancel → cancelRequest (פעולה נפרדת).
 // 'danger' → דורש מודאל אישור. אין מחיקה.
 const OP_STATUS = { approve: 'approved', reject: 'rejected', disable: 'disabled' };
+// cancel / unreject → cancelRequest (איפוס למצב טופס-מחדש), לא מעבר-סטטוס.
+const CANCEL_OPS = ['cancel', 'unreject'];
 const ACTIONS_FOR = {
   pending: [
     { op: 'approve', label: 'אשר' },
@@ -194,7 +196,10 @@ const ACTIONS_FOR = {
     { op: 'cancel', label: 'בטל בקשה', danger: true },
   ],
   approved: [{ op: 'disable', label: 'השבת', danger: true }],
-  rejected: [{ op: 'approve', label: 'אשר' }],
+  rejected: [
+    { op: 'approve', label: 'אשר' },
+    { op: 'unreject', label: 'בטל דחייה', danger: true },
+  ],
   disabled: [{ op: 'approve', label: 'הפעל מחדש' }],
 };
 
@@ -222,6 +227,7 @@ const CONFIRM_COPY = {
   reject: { title: 'לדחות את המשתמש?', explain: 'המשתמש ייחסם מהגשת בקשת הצטרפות חדשה.' },
   disable: { title: 'להשבית את המשתמש?', explain: 'הגישה תיחסם, אך ההיסטוריה והנתונים שלו יישמרו.' },
   cancel: { title: 'לבטל את הבקשה?', explain: 'הבקשה תבוטל. המשתמש לא ייחסם ויוכל להגיש בקשה חדשה בכניסה הבאה.' },
+  unreject: { title: 'לבטל את הדחייה?', explain: 'הדחייה תבוטל והמשתמש יוכל להגיש בקשת הצטרפות חדשה.' },
 };
 
 // מודאל אישור לפעולה משמעותית. עצמאי בניהול busy/שגיאה. onConfirm מבצע את
@@ -373,12 +379,12 @@ function AdminUsersScreen({ onBack }) {
       const r = await fetch('/api/admin/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op: 'cancelRequest', userId }) });
       const d = await r.json().catch(() => ({}));
       if (d.ok) { setUsers(d.users || []); return { ok: true }; }
-      return { ok: false, error: d.error === 'invalid_state' ? 'ניתן לבטל רק בקשה ממתינה.' : 'הפעולה נכשלה. נסו שוב.' };
+      return { ok: false, error: d.error === 'invalid_state' ? 'לא ניתן לבצע את הפעולה במצב הנוכחי.' : 'הפעולה נכשלה. נסו שוב.' };
     } catch { return { ok: false, error: 'שגיאת רשת. נסו שוב.' }; }
   };
 
-  // מפעיל את הפעולה לפי ה-op: cancel → cancelRequest, אחרת setStatus.
-  const perform = (userId, a) => (a.op === 'cancel' ? cancelRequest(userId) : setStatus(userId, OP_STATUS[a.op]));
+  // מפעיל את הפעולה לפי ה-op: cancel/unreject → cancelRequest, אחרת setStatus.
+  const perform = (userId, a) => (CANCEL_OPS.includes(a.op) ? cancelRequest(userId) : setStatus(userId, OP_STATUS[a.op]));
 
   // מסלול ישיר (בלי מודאל): אשר / הפעל מחדש. שגיאה מוצגת בפס ההודעות של המסך.
   const runDirect = async (userId, a) => {
