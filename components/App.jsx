@@ -732,20 +732,20 @@ function Dashboard({ postings, coordRequests, go }) {
             אוגדות המרכז
           </h2>
           <div className="grid grid-cols-4 gap-2">
-            <div className="bg-white/15 border border-white/10 backdrop-blur-sm rounded-xl p-2.5 text-center">
-              <div className="text-xl font-bold">{stats.heliAvailable}</div>
+            <div className="bg-white/15 border border-white/10 backdrop-blur-sm rounded-lg p-2 text-center">
+              <div className="text-lg font-bold">{stats.heliAvailable}</div>
               <div className="text-[10px] text-slate-100 mt-0.5">אימוני מסוקים פנויים</div>
             </div>
-            <div className="bg-white/15 border border-white/10 backdrop-blur-sm rounded-xl p-2.5 text-center">
-              <div className="text-xl font-bold">{stats.groundAvailable}</div>
+            <div className="bg-white/15 border border-white/10 backdrop-blur-sm rounded-lg p-2 text-center">
+              <div className="text-lg font-bold">{stats.groundAvailable}</div>
               <div className="text-[10px] text-slate-100 mt-0.5">אימוני קרקע פנויים</div>
             </div>
-            <div className="bg-white/15 border border-white/10 backdrop-blur-sm rounded-xl p-2.5 text-center">
-              <div className="text-xl font-bold">{stats.inCoordination}</div>
+            <div className="bg-white/15 border border-white/10 backdrop-blur-sm rounded-lg p-2 text-center">
+              <div className="text-lg font-bold">{stats.inCoordination}</div>
               <div className="text-[10px] text-slate-100 mt-0.5">אימונים בתיאום</div>
             </div>
-            <div className="bg-white/15 border border-white/10 backdrop-blur-sm rounded-xl p-2.5 text-center">
-              <div className="text-xl font-bold">{stats.completed}</div>
+            <div className="bg-white/15 border border-white/10 backdrop-blur-sm rounded-lg p-2 text-center">
+              <div className="text-lg font-bold">{stats.completed}</div>
               <div className="text-[10px] text-slate-100 mt-0.5">אימונים שהושלמו</div>
             </div>
           </div>
