@@ -844,7 +844,6 @@ function ChipFilter({ label, options, selected, onToggle, onClear }) {
 function PostingListScreen({ type, postings, coordRequests, go, onBack }) {
   const [view, setView] = useState('gantt'); // ברירת מחדל: גאנט
   const [q, setQ] = useState('');
-  const [statusF, setStatusF] = useState([]);
   const [coordStateF, setCoordStateF] = useState([]);
   const [dateFrom, setDateFrom] = useState('');
   const [spaceF, setSpaceF] = useState([]);
@@ -856,15 +855,14 @@ function PostingListScreen({ type, postings, coordRequests, go, onBack }) {
 
   // כל המסננים הם בחירה-מרובה (מערכים). OR בתוך קטגוריה, AND בין קטגוריות.
   const toggleIn = (setter) => (val) => setter(a => a.includes(val) ? a.filter(x => x !== val) : [...a, val]);
-  const clearAll = () => { setStatusF([]); setCoordStateF([]); setSpaceF([]); setAreaF([]); setSquadronsF([]); setTrainingTypeF([]); setAirSupportF([]); setDateFrom(''); };
-  const activeCount = statusF.length + coordStateF.length + spaceF.length + areaF.length + squadronsF.length + trainingTypeF.length + airSupportF.length + (dateFrom ? 1 : 0);
+  const clearAll = () => { setCoordStateF([]); setSpaceF([]); setAreaF([]); setSquadronsF([]); setTrainingTypeF([]); setAirSupportF([]); setDateFrom(''); };
+  const activeCount = coordStateF.length + spaceF.length + areaF.length + squadronsF.length + trainingTypeF.length + airSupportF.length + (dateFrom ? 1 : 0);
 
   // אפשרויות (value/label) לכל קטגוריה. "אזור" מציג את כל האזורים תמיד (בלתי-תלוי
   // במרחב) כדי שבחירה לא "תיעלם" בעת שינוי מרחב; הצירוף בין הקטגוריות מצטבר (AND).
   const spaceOptions = SPACE_NAMES.map(s => ({ value: s, label: s }));
   const areaChipOptions = ALL_AREAS.map(a => ({ value: a, label: a }));
   const coordOptions = Object.entries(COORD_STATE).map(([k, v]) => ({ value: k, label: v.label }));
-  const statusOptions = Object.entries(POSTING_STATUS).map(([k, v]) => ({ value: k, label: v.label }));
   const trainingOptions = TRAINING_TYPES.map(t => ({ value: t, label: t }));
   const airOptions = AIR_SUPPORT_TYPES.map(t => ({ value: t, label: t }));
   const squadronOptions = SQUADRONS.map(s => ({ value: s.number, label: 'טייסת ' + s.number }));
@@ -874,7 +872,6 @@ function PostingListScreen({ type, postings, coordRequests, go, onBack }) {
   const list = useMemo(() => {
     return postings
       .filter(p => p.type === type)
-      .filter(p => statusF.length === 0 || statusF.includes(p.status))
       .filter(p => coordStateF.length === 0 || coordStateF.includes(deriveTrainingStatus(p, byPost[p.id] || [])))
       .filter(p => !dateFrom || postingDate(p) >= dateFrom)
       .filter(p => spaceF.length === 0 || spaceF.includes(postingSpace(p)))
@@ -894,7 +891,7 @@ function PostingListScreen({ type, postings, coordRequests, go, onBack }) {
         return hay.includes(q.toLowerCase());
       })
       .sort((a, b) => (postingDate(a) || '9999').localeCompare(postingDate(b) || '9999'));
-  }, [postings, byPost, type, statusF, coordStateF, dateFrom, spaceF, areaF, squadronsF, trainingTypeF, airSupportF, q]);
+  }, [postings, byPost, type, coordStateF, dateFrom, spaceF, areaF, squadronsF, trainingTypeF, airSupportF, q]);
 
   const isHeli = type === 'helicopter';
 
@@ -932,7 +929,6 @@ function PostingListScreen({ type, postings, coordRequests, go, onBack }) {
             <ChipFilter label="מרחב" options={spaceOptions} selected={spaceF} onToggle={toggleIn(setSpaceF)} onClear={() => setSpaceF([])} />
             <ChipFilter label="אזור" options={areaChipOptions} selected={areaF} onToggle={toggleIn(setAreaF)} onClear={() => setAreaF([])} />
             <ChipFilter label="סטטוס תיאום" options={coordOptions} selected={coordStateF} onToggle={toggleIn(setCoordStateF)} onClear={() => setCoordStateF([])} />
-            <ChipFilter label="סטטוס פרסום" options={statusOptions} selected={statusF} onToggle={toggleIn(setStatusF)} onClear={() => setStatusF([])} />
             {!isHeli && <ChipFilter label="סוג אימון" options={trainingOptions} selected={trainingTypeF} onToggle={toggleIn(setTrainingTypeF)} onClear={() => setTrainingTypeF([])} />}
             {!isHeli && <ChipFilter label="סוג סיוע מבוקש" options={airOptions} selected={airSupportF} onToggle={toggleIn(setAirSupportF)} onClear={() => setAirSupportF([])} />}
             <div className="mb-1">
