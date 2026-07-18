@@ -9,7 +9,7 @@ import {
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
 } from "recharts";
-import { deriveMyTasks, TASK_TYPES } from '../lib/tasks';
+import { deriveMyTasks, deriveMyTrainings, TASK_TYPES } from '../lib/tasks';
 
 function HeliIcon({ size = 16, className = '' }) {
   return (
@@ -765,9 +765,13 @@ function Dashboard({ postings, coordRequests, go }) {
         </button>
       </div>
 
-      {/* האימונים שלי — נגזרים מהמצב החי, אישיים בלבד. מונה תמיד מוצג. */}
+      {/* האימונים שלי — נגזרים מהמצב החי, אישיים בלבד. מונה תמיד מוצג. הכותרת
+          לחיצה: פותחת מסך עם *כל* האימונים שלי (מלא). הכרטיסים למטה נשארים כמו שהם. */}
       <div className="px-4 mt-6">
-        <h3 className="font-bold text-slate-800 mb-3">📋 האימונים שלי ({myTasks.length})</h3>
+        <button onClick={() => go('myTrainings')} className="w-full flex items-center justify-between mb-3 text-right active:opacity-80">
+          <h3 className="font-bold text-slate-800">📋 האימונים שלי ({myTasks.length})</h3>
+          <span className="flex items-center gap-0.5 text-xs font-bold text-sky-600 shrink-0">הצג הכל <ChevronLeft size={15} /></span>
+        </button>
         {myTasks.length === 0 ? (
           <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 text-center">
             <Check size={20} className="text-emerald-600 mx-auto mb-1" />
@@ -784,6 +788,29 @@ function Dashboard({ postings, coordRequests, go }) {
         <button onClick={() => go('timeline')} className="w-full bg-white border border-slate-200 rounded-2xl p-3.5 flex items-center justify-center gap-2 font-bold text-slate-700 text-sm shadow-sm active:scale-[0.98] transition">
           <CalendarDays size={18} className="text-sky-600" /> תצוגת גאנט — ציר זמן אימונים
         </button>
+      </div>
+    </div>
+  );
+}
+
+/* ============================== האימונים שלי — רשימה מלאה ============================== */
+
+// מסך "כל האימונים שלי" — רשימה מלאה של האימונים שאני מעורב בהם (שפרסמתי +
+// שביקשתי להצטרף). שימוש חוזר ב-PostingCard הקיים; לחיצה על כרטיס → פרטי האימון.
+function MyTrainingsScreen({ postings, coordRequests, go, onBack }) {
+  const me = useMe();
+  const byPost = groupCoordsByPost(coordRequests);
+  const mine = deriveMyTrainings(postings, coordRequests, me)
+    .sort((a, b) => (postingDate(b) || '').localeCompare(postingDate(a) || '')); // תאריך מאוחר→מוקדם
+  return (
+    <div className="pb-6">
+      <Header title="האימונים שלי" onBack={onBack} />
+      <div className="px-4 pt-4 space-y-3">
+        {mine.length === 0 ? (
+          <EmptyState icon={CalendarDays} title="אין אימונים" subtitle="עדיין לא פרסמת אימון ולא ביקשת להצטרף לאימון" />
+        ) : mine.map(p => (
+          <PostingCard key={p.id} posting={p} coordState={deriveTrainingStatus(p, byPost[p.id] || [])} onClick={() => go('posting', { id: p.id })} />
+        ))}
       </div>
     </div>
   );
@@ -2341,6 +2368,7 @@ export default function App({ me = { userId: null, isAdmin: false }, navRequest 
 
   let content;
   if (screen === 'dashboard') content = <Dashboard postings={postings} coordRequests={coordRequests} go={go} />;
+  else if (screen === 'myTrainings') content = <MyTrainingsScreen postings={postings} coordRequests={coordRequests} go={go} onBack={goBack} />;
   else if (screen === 'helicopters') content = <PostingListScreen type="helicopter" postings={postings} coordRequests={coordRequests} go={go} onBack={goBack} />;
   else if (screen === 'ground') content = <PostingListScreen type="ground" postings={postings} coordRequests={coordRequests} go={go} onBack={goBack} />;
   else if (screen === 'posting') content = <PostingDetailScreen postingId={params.id} postings={postings} coordRequests={coordRequests} onBack={goBack} go={go} actions={actions} />;
