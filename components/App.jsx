@@ -1318,14 +1318,23 @@ function CoordinationDetailScreen({ coordId, coordRequests, postings, onBack, go
           <InfoRow icon={AlertTriangle} label="הודעה" value={coord.message} />
         </div>
 
-        {/* סרגל התקדמות התיאום הועבר לכרטיס הבקשה שהתקבלה במסך הפרסום — כאן מוצג
-            רק סטטוס הבקשה, כדי למנוע כפילות. */}
         <div className="bg-white rounded-2xl border border-slate-200 p-4 mb-4 flex items-center justify-between">
           <h3 className="font-bold text-slate-800">סטטוס הבקשה</h3>
           <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-bold ${REQUEST_STATUS_STYLE[normalizeRequestStatus(coord)]}`}>
             {REQUEST_STATUS_LABEL[normalizeRequestStatus(coord)]}
           </span>
         </div>
+
+        {/* סרגל התקדמות התיאום — אותו קומפוננט (ProgressBar) ואותו מקור אמת
+            (coord.coordinationStatus) כמו בכרטיס הבקשה במסך הפרסום, כך שהתצוגה
+            תמיד מסונכרנת. כאן לתצוגה בלבד (editable=false); שינוי שלבים נשאר
+            בכרטיס הבקשה. מוצג רק לבקשה שהתקבלה — בדיוק כמו הסרגל החיצוני. */}
+        {normalizeRequestStatus(coord) === 'accepted' && (
+          <div className="bg-white rounded-2xl border border-slate-200 p-4 mb-4">
+            <div className="text-xs font-bold text-slate-500 mb-3">התקדמות התיאום</div>
+            <ProgressBar currentKey={coord.coordinationStatus} editable={false} onStageClick={() => {}} />
+          </div>
+        )}
 
         {canManage && (
         <div className="bg-white rounded-2xl border border-slate-200 p-4 mb-4">
