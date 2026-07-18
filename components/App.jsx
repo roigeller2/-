@@ -753,25 +753,25 @@ function Dashboard({ postings, coordRequests, go }) {
       </div>
 
       <div className="px-4 mt-5 grid grid-cols-2 gap-3">
-        <button onClick={() => go('newHelicopter')} className="bg-sky-700 text-white rounded-2xl p-4 flex flex-col items-center justify-center text-center shadow-sm active:scale-[0.98] transition">
+        <button onClick={() => go('helicopters')} className="bg-sky-700 text-white rounded-2xl p-4 flex flex-col items-center justify-center text-center shadow-sm active:scale-[0.98] transition">
           <HeliIcon size={26} className="mb-2" />
-          <div className="font-bold text-sm">טייסות המסוקים</div>
+          <div className="font-bold text-sm">לגאנט אימוני המסוקים</div>
           <div className="text-xs text-sky-100">לחץ כאן</div>
         </button>
-        <button onClick={() => go('newGround')} className="text-white rounded-2xl p-4 flex flex-col items-center justify-center text-center shadow-sm active:scale-[0.98] transition" style={{ backgroundColor: '#556b2f' }}>
+        <button onClick={() => go('ground')} className="text-white rounded-2xl p-4 flex flex-col items-center justify-center text-center shadow-sm active:scale-[0.98] transition" style={{ backgroundColor: '#556b2f' }}>
           <Users size={22} className="mb-2 text-lime-200" />
-          <div className="font-bold text-sm">כוח קרקעי</div>
+          <div className="font-bold text-sm">לגאנט אימוני הכוחות</div>
           <div className="text-xs text-lime-100">לחץ כאן</div>
         </button>
       </div>
 
-      {/* המשימות שלי — נגזרות מהמצב החי, אישיות בלבד. מונה תמיד מוצג. */}
+      {/* האימונים שלי — נגזרים מהמצב החי, אישיים בלבד. מונה תמיד מוצג. */}
       <div className="px-4 mt-6">
-        <h3 className="font-bold text-slate-800 mb-3">📋 המשימות שלי ({myTasks.length})</h3>
+        <h3 className="font-bold text-slate-800 mb-3">📋 האימונים שלי ({myTasks.length})</h3>
         {myTasks.length === 0 ? (
           <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 text-center">
             <Check size={20} className="text-emerald-600 mx-auto mb-1" />
-            <p className="text-sm font-semibold text-emerald-800">אין משימות פתוחות — הכול מתואם.</p>
+            <p className="text-sm font-semibold text-emerald-800">אין אימונים רלוונטיים כרגע — הכול מתואם.</p>
           </div>
         ) : (
           <div className="space-y-2.5">
