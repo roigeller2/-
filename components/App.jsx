@@ -734,19 +734,19 @@ function Dashboard({ postings, coordRequests, go }) {
           <div className="grid grid-cols-4 gap-2">
             <div className="bg-white/15 border border-white/10 backdrop-blur-sm rounded-xl p-2.5 text-center">
               <div className="text-xl font-bold">{stats.heliAvailable}</div>
-              <div className="text-[10px] text-slate-100 mt-0.5">מסוקים פנויים</div>
+              <div className="text-[10px] text-slate-100 mt-0.5">אימוני מסוקים פנויים</div>
             </div>
             <div className="bg-white/15 border border-white/10 backdrop-blur-sm rounded-xl p-2.5 text-center">
               <div className="text-xl font-bold">{stats.groundAvailable}</div>
-              <div className="text-[10px] text-slate-100 mt-0.5">קרקע פנויים</div>
+              <div className="text-[10px] text-slate-100 mt-0.5">אימוני קרקע פנויים</div>
             </div>
             <div className="bg-white/15 border border-white/10 backdrop-blur-sm rounded-xl p-2.5 text-center">
               <div className="text-xl font-bold">{stats.inCoordination}</div>
-              <div className="text-[10px] text-slate-100 mt-0.5">בתיאום</div>
+              <div className="text-[10px] text-slate-100 mt-0.5">אימונים בתיאום</div>
             </div>
             <div className="bg-white/15 border border-white/10 backdrop-blur-sm rounded-xl p-2.5 text-center">
               <div className="text-xl font-bold">{stats.completed}</div>
-              <div className="text-[10px] text-slate-100 mt-0.5">הושלמו</div>
+              <div className="text-[10px] text-slate-100 mt-0.5">אימונים שהושלמו</div>
             </div>
           </div>
         </div>
