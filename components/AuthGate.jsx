@@ -18,27 +18,19 @@ function LoginScreen() {
   // נטענת ואינה מוצגת כאן כל עוד משתני Resend אינם מוגדרים.
   // מסך Hero מלא: תמונת רקע על כל המסך + Overlay כהה + תוכן לבן ממורכז.
   // UI בלבד — ללא שינוי בלוגיקת ההתחברות.
-  // רקע ה-Hero:
-  //  • דסקטופ (md+): object-cover מלא — התצוגה הקיימת ללא שינוי.
-  //  • מובייל/מסך צר: התמונה 3:2 על מסך פורטרט נחתכת חזק ב-cover (זום-אין).
-  //    לכן מציגים פס חד ברוחב מלא בגובה מופחת (רואים יותר מהתמונה), על גבי
-  //    עותק מטושטש שממלא את כל המסך (בלי שוליים לבנים), עם מסכת דהייה רכה
-  //    בקצה העליון/תחתון כדי שהמעבר לרקע המטושטש יהיה חלק. ללא עיוות.
-  const softMask = 'linear-gradient(to bottom, transparent, #000 14%, #000 86%, transparent)';
+  // רקע ה-Hero — תמונה ייעודית לכל פורמט, שתיהן ב-object-cover מלא:
+  //  • דסקטופ/טאבלט רחב (md+): התמונה הרוחבית הקיימת — ללא שינוי.
+  //  • מובייל/מסך צר: תמונת פורטרט ייעודית (login-hero-mobile) המותאמת לפורטרט,
+  //    ולכן ממלאת את כל המסך בלי חיתוך-יתר ובלי עיוות.
   return (
     <div dir="rtl" lang="he" className="relative min-h-screen w-full overflow-hidden bg-slate-900"
       style={{ fontFamily: "'Heebo', system-ui, sans-serif" }}>
-      {/* דסקטופ: cover מלא (ללא שינוי) */}
+      {/* דסקטופ/טאבלט רחב: תמונת הרקע הקיימת (ללא שינוי) */}
       <img src="/login-hero.jpg" alt="" aria-hidden="true"
         className="hidden md:block absolute inset-0 h-full w-full object-cover" />
-      {/* מובייל: מילוי מטושטש על כל המסך (מונע שוליים) */}
-      <img src="/login-hero.jpg" alt="" aria-hidden="true"
-        className="md:hidden absolute inset-0 h-full w-full object-cover scale-110 blur-[22px]" />
-      {/* מובייל: פס חד ברוחב מלא, גובה מופחת, עם דהייה רכה בקצוות */}
-      <div className="md:hidden absolute inset-x-0 top-1/2 h-[66%] -translate-y-1/2"
-        style={{ WebkitMaskImage: softMask, maskImage: softMask }}>
-        <img src="/login-hero.jpg" alt="" aria-hidden="true" className="h-full w-full object-cover" />
-      </div>
+      {/* מובייל/מסך צר: תמונת פורטרט ייעודית */}
+      <img src="/login-hero-mobile.jpg" alt="" aria-hidden="true"
+        className="md:hidden absolute inset-0 h-full w-full object-cover" />
       {/* שכבת Overlay כהה לקריאוּת */}
       <div className="absolute inset-0 bg-black/50" />
       {/* תוכן ממורכז אופקית ואנכית */}
