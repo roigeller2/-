@@ -1,8 +1,8 @@
 import NextAuth from 'next-auth';
 import Google from 'next-auth/providers/google';
 import Resend from 'next-auth/providers/resend';
-import { UpstashRedisAdapter } from '@auth/upstash-redis-adapter';
-import { redis } from './lib/redis.js';
+import PostgresAdapter from '@auth/pg-adapter';
+import { pool } from './lib/db.js';
 import { ensureProfileOnSignIn } from './lib/users.js';
 import { resolveAccess } from './lib/authz.js';
 
@@ -25,11 +25,11 @@ if (process.env.AUTH_RESEND_KEY && process.env.EMAIL_FROM) {
 }
 
 // קונפיגורציית Auth.js (NextAuth v5). זהות בלבד; ה-authorization (approval/
-// ownerId) הוא לוגיקה שלנו ב-Redis, נבדק טרי בכל בקשה.
+// ownerId) הוא לוגיקה שלנו ב-Postgres, נבדק טרי בכל בקשה.
 export const { handlers, auth, signIn, signOut } = NextAuth({
-  // רשומות הזהות (user/account/session/verification-token) נשמרות ב-Redis
-  // תחת התחילית 'auth:', בנפרד מהנתונים ומפרופילי ההרשאה שלנו.
-  adapter: UpstashRedisAdapter(redis, { baseKeyPrefix: 'auth:' }),
+  // רשומות הזהות (users/accounts/sessions/verification_token) נשמרות ב-Postgres
+  // (Supabase) דרך ה-adapter הרשמי, בנפרד מפרופילי ההרשאה שלנו (טבלת profiles).
+  adapter: PostgresAdapter(pool),
   providers,
   session: { strategy: 'database' },
   callbacks: {
@@ -44,7 +44,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     // get-or-create אידמפוטנטי תחת מזהה ה-DB (user.id = UUID) — מבטיח שהפרופיל
     // קיים תחת אותו מזהה שבו משתמשים session.userId ו-setReferral, ואינו דורס
     // פרופיל קיים. מחזיר את הפרופיל ומשתמשים בו ישירות (בלי getProfile נוסף).
-    // ההרשאה (approval/admin/onboarded) נקראת טרייה מ-Redis בכל בקשה.
+    // ההרשאה (approval/admin/onboarded) נקראת טרייה מ-Postgres בכל בקשה.
     async session({ session, user }) {
       const profile = await ensureProfileOnSignIn(user.id, user.email, user.name);
       session.userId = user.id;
