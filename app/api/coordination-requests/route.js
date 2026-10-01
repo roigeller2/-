@@ -1,25 +1,14 @@
 import { NextResponse } from 'next/server';
 import { auth } from '../../../auth';
-import { readCollection, mutateCollectionServer } from '../../../lib/collection';
-import { canCreate, canActAsPostingOwner } from '../../../lib/authz';
+import { canCreate } from '../../../lib/authz';
+import { COORD_STAGE_KEYS, EXEC_STATUS_KEYS } from '../../../lib/coord';
 import {
-  COORD_STAGE_KEYS, EXEC_STATUS_KEYS, coordPostId,
-  mutatorCreate, mutatorAccept, mutatorSetRequestStatus, mutatorSetStage, mutatorSetExec, mutatorCancelOwned,
-} from '../../../lib/coord';
+  listCoordRequests, createCoord, cancelCoord, acceptCoord, rejectCoord, setStage, setExec,
+} from '../../../lib/coordRepo';
 import { notify, NOTIF_TYPES } from '../../../lib/notify';
 import { buildRequestNewEvent, buildRequestStatusEvent, emitIfOk } from '../../../lib/coordNotify';
 
 export const dynamic = 'force-dynamic';
-
-const DATA_KEY = 'coordination-requests';
-const REV_KEY = 'coordination-requests:rev';
-const POSTINGS_KEY = 'postings';
-const POSTINGS_REV = 'postings:rev';
-
-const uid = () =>
-  (globalThis.crypto && globalThis.crypto.randomUUID)
-    ? globalThis.crypto.randomUUID()
-    : 'id-' + Date.now() + '-' + Math.random().toString(16).slice(2);
 
 const forbidden = () => NextResponse.json({ ok: false, error: 'אין הרשאה' }, { status: 403 });
 
@@ -34,25 +23,11 @@ function respond(result, extra = {}) {
   return NextResponse.json({ ok: false, error: result.message || 'שגיאת שרת' }, { status: 500 });
 }
 
-// פעולות בעל-האימון (accept/reject/setStage/setExec): הבעלות נקבעת לפי בעל
-// *הפרסום* שהבקשה מפנה אליו. postId ו-ownerId הם שדות בלתי-משתנים, לכן בדיקה
-// מול קריאה טרייה שלהם בטוחה (אין TOCTOU על בעלות). מחזיר null אם מותר, או
-// תשובת שגיאה (404/403) אם לא.
-async function checkPostingOwnerForCoord(id, access, userId) {
-  const { value: coords } = await readCollection(DATA_KEY, REV_KEY);
-  const coord = coords.find(c => c.id === id);
-  if (!coord) return NextResponse.json({ ok: false, blocked: true, reason: 'not_found' }, { status: 404 });
-  const { value: postings } = await readCollection(POSTINGS_KEY, POSTINGS_REV);
-  const posting = postings.find(p => p.id === coordPostId(coord));
-  if (!canActAsPostingOwner(access, userId, posting)) return forbidden();
-  return null;
-}
-
 export async function GET() {
   const session = await auth();
   if (!session?.access?.canUse) return forbidden();
   try {
-    const { value, rev } = await readCollection(DATA_KEY, REV_KEY);
+    const { value, rev } = await listCoordRequests();
     return NextResponse.json({ value, rev });
   } catch (e) {
     console.error('[api/coordination-requests] GET failed:', e);
@@ -76,60 +51,37 @@ export async function POST(request) {
       if (!data || typeof data !== 'object' || Array.isArray(data)) {
         return NextResponse.json({ ok: false, error: 'נתוני בקשה לא תקינים' }, { status: 400 });
       }
-      const now = new Date().toISOString();
-      // requesterId מה-session, לא מהלקוח. סטטוס נכפה ל-pending.
-      const coord = {
-        ...data,
-        id: uid(),
-        requesterId: userId,
-        requesterName: session.user?.name || null,
-        coordinationStatus: 'initial_coordination_done',
-        requestStatus: 'pending',
-        trainingExecutionStatus: 'pending',
-        completedAt: null,
-        cancellationReason: null,
-        createdAt: now,
-        updatedAt: now,
-      };
-      const result = await mutateCollectionServer(DATA_KEY, REV_KEY, mutatorCreate(coord));
-      // התראה רק אחרי הצלחת ה-CAS. הנתונים נלקחים מהבקשה שנוצרה (coord); רק
-      // ownerId מגיע מהפרסום — שדה בלתי-משתנה, לכן קריאה אחת בטוחה (ללא TOCTOU).
-      await emitIfOk(result, async () => {
-        const { value: postings } = await readCollection(POSTINGS_KEY, POSTINGS_REV);
-        const posting = postings.find(p => p.id === coordPostId(coord));
-        await notify(buildRequestNewEvent(coord, posting, userId));
+      // requesterId מה-session, לא מהלקוח. סטטוסים נכפים ב-repo.
+      const result = await createCoord({ data, requesterId: userId, requesterName: session.user?.name || null });
+      // התראה רק אחרי הצלחה; נמען = בעל הפרסום (postingOwnerId מה-repo). best-effort.
+      await emitIfOk(result, async (fresh) => {
+        const coord = (fresh || []).find((c) => c.id === result.id);
+        if (coord) await notify(buildRequestNewEvent(coord, { ownerId: result.postingOwnerId }, userId));
       });
-      return respond(result, { id: coord.id });
+      return respond(result, { id: result.id });
     }
 
     const id = body?.id;
     if (typeof id !== 'string') return NextResponse.json({ ok: false, error: 'מזהה בקשה חסר' }, { status: 400 });
 
     if (op === 'cancel') {
-      // ביטול — בעלות requesterId, נאכפת בתוך המוטטור על נתונים טריים.
-      const result = await mutateCollectionServer(DATA_KEY, REV_KEY, mutatorCancelOwned(id, access, userId));
+      const result = await cancelCoord(id, access, userId);
       return respond(result);
     }
 
-    // מכאן — פעולות בעל-האימון בלבד.
     if (op === 'accept') {
-      const deny = await checkPostingOwnerForCoord(id, access, userId);
-      if (deny) return deny;
-      const result = await mutateCollectionServer(DATA_KEY, REV_KEY, mutatorAccept(id));
-      // נמען = יוצר הבקשה, מתוך הבקשה הטרייה שהוחזרה מהמוטציה (result.value).
+      const result = await acceptCoord(id, access, userId);
       await emitIfOk(result, async (fresh) => {
-        const coord = (fresh || []).find(c => c.id === id);
+        const coord = (fresh || []).find((c) => c.id === id);
         if (coord) await notify(buildRequestStatusEvent(NOTIF_TYPES.REQUEST_ACCEPTED, coord, userId));
       });
       return respond(result);
     }
 
     if (op === 'reject') {
-      const deny = await checkPostingOwnerForCoord(id, access, userId);
-      if (deny) return deny;
-      const result = await mutateCollectionServer(DATA_KEY, REV_KEY, mutatorSetRequestStatus(id, 'rejected'));
+      const result = await rejectCoord(id, access, userId);
       await emitIfOk(result, async (fresh) => {
-        const coord = (fresh || []).find(c => c.id === id);
+        const coord = (fresh || []).find((c) => c.id === id);
         if (coord) await notify(buildRequestStatusEvent(NOTIF_TYPES.REQUEST_REJECTED, coord, userId));
       });
       return respond(result);
@@ -138,18 +90,14 @@ export async function POST(request) {
     if (op === 'setStage') {
       const stageKey = body?.stageKey;
       if (!COORD_STAGE_KEYS.includes(stageKey)) return NextResponse.json({ ok: false, error: 'שלב תיאום לא תקין' }, { status: 400 });
-      const deny = await checkPostingOwnerForCoord(id, access, userId);
-      if (deny) return deny;
-      return respond(await mutateCollectionServer(DATA_KEY, REV_KEY, mutatorSetStage(id, stageKey)));
+      return respond(await setStage(id, stageKey, access, userId));
     }
 
     if (op === 'setExec') {
       const execStatus = body?.execStatus;
       const cancellationReason = body?.cancellationReason;
       if (!EXEC_STATUS_KEYS.includes(execStatus)) return NextResponse.json({ ok: false, error: 'סטטוס ביצוע לא תקין' }, { status: 400 });
-      const deny = await checkPostingOwnerForCoord(id, access, userId);
-      if (deny) return deny;
-      return respond(await mutateCollectionServer(DATA_KEY, REV_KEY, mutatorSetExec(id, execStatus, cancellationReason)));
+      return respond(await setExec(id, execStatus, cancellationReason, access, userId));
     }
 
     return NextResponse.json({ ok: false, error: 'פעולה לא מוכרת' }, { status: 400 });
