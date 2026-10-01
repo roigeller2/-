@@ -1,18 +1,9 @@
 import { NextResponse } from 'next/server';
 import { auth } from '../../../auth';
-import { readCollection, mutateCollectionServer } from '../../../lib/collection';
 import { canCreate } from '../../../lib/authz';
-import { mutatorCreatePosting, mutatorSetTrainingOverride } from '../../../lib/posting';
+import { listPostings, createPosting, setTrainingOverride } from '../../../lib/postingsRepo';
 
 export const dynamic = 'force-dynamic';
-
-const DATA_KEY = 'postings';
-const REV_KEY = 'postings:rev';
-
-const uid = () =>
-  (globalThis.crypto && globalThis.crypto.randomUUID)
-    ? globalThis.crypto.randomUUID()
-    : 'id-' + Date.now() + '-' + Math.random().toString(16).slice(2);
 
 const forbidden = () => NextResponse.json({ ok: false, error: 'אין הרשאה' }, { status: 403 });
 
@@ -31,7 +22,7 @@ export async function GET() {
   const session = await auth();
   if (!session?.access?.canUse) return forbidden();
   try {
-    const { value, rev } = await readCollection(DATA_KEY, REV_KEY);
+    const { value, rev } = await listPostings();
     return NextResponse.json({ value, rev });
   } catch (e) {
     console.error('[api/postings] GET failed:', e);
@@ -55,20 +46,9 @@ export async function POST(request) {
       if (!data || typeof data !== 'object' || Array.isArray(data)) {
         return NextResponse.json({ ok: false, error: 'נתוני פרסום לא תקינים' }, { status: 400 });
       }
-      const now = new Date().toISOString();
-      // השרת שולט ב-id/status/timestamps *ובבעלות* — ownerId נלקח מה-session,
-      // לא מהלקוח (spread לפני, ואז דריסה מפורשת).
-      const posting = {
-        ...data,
-        id: uid(),
-        status: 'available',
-        ownerId: userId,
-        ownerName: session.user?.name || null,
-        createdAt: now,
-        updatedAt: now,
-      };
-      const result = await mutateCollectionServer(DATA_KEY, REV_KEY, mutatorCreatePosting(posting));
-      return respond(result, { id: posting.id });
+      // השרת שולט ב-id/status/timestamps *ובבעלות* — ownerId נלקח מה-session, לא מהלקוח.
+      const result = await createPosting({ data, ownerId: userId, ownerName: session.user?.name || null });
+      return respond(result, { id: result.id });
     }
 
     if (op === 'setTrainingOverride') {
@@ -78,8 +58,8 @@ export async function POST(request) {
       if (!(manualStatus === 'done' || manualStatus === 'cancelled' || manualStatus === null)) {
         return NextResponse.json({ ok: false, error: 'ערך override לא תקין' }, { status: 400 });
       }
-      // אכיפת הבעלות בתוך המוטטור על נתונים טריים.
-      const result = await mutateCollectionServer(DATA_KEY, REV_KEY, mutatorSetTrainingOverride(id, manualStatus, access, userId));
+      // אכיפת הבעלות בתוך ה-repo על השורה הנעולה (SELECT ... FOR UPDATE).
+      const result = await setTrainingOverride(id, manualStatus, access, userId);
       return respond(result);
     }
 
