@@ -235,7 +235,7 @@ const KEY_COORDS = 'coordination-requests';
 
 const API_PATH = { postings: '/api/postings', 'coordination-requests': '/api/coordination-requests' };
 
-// בדיקת זמינות ה-API (מסד הנתונים המשותף ב-Vercel KV)
+// בדיקת זמינות ה-API (מסד הנתונים המשותף)
 async function storagePing() {
   try {
     const res = await fetch(API_PATH.postings, { cache: 'no-store' });
@@ -2396,8 +2396,8 @@ export default function App({ me = { userId: null, isAdmin: false }, navRequest 
           <div className="bg-amber-500 text-white text-xs font-bold px-4 py-2.5 flex items-start gap-2">
             <AlertTriangle size={15} className="shrink-0 mt-0.5" />
             <span>
-              מסד הנתונים המשותף (Vercel KV) לא זמין — הנתונים לא נשמרים לשיתוף.
-              יש לוודא שה-KV מחובר לפרויקט ב-Vercel ושמשתני הסביבה שלו מוגדרים.
+              מסד הנתונים המשותף אינו זמין כרגע — הנתונים לא נשמרים לשיתוף.
+              נסו לרענן; אם הבעיה נמשכת, ייתכן שהשירות זמנית אינו זמין.
               {lastError && <> שגיאה: {lastError}</>}
             </span>
           </div>
