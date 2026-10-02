@@ -2320,6 +2320,8 @@ export default function App({ me = { userId: null, isAdmin: false }, navRequest 
       if (r.blocked) {
         if (r.reason === 'accepted_exists') {
           showToast('כבר קיימת בקשה מאושרת לאימון הזה. יש לדחות או לבטל אותה כדי לאשר בקשה אחרת.');
+        } else if (r.reason === 'not_pending') {
+          showToast('לא ניתן לאשר בקשה שאינה ממתינה (בוטלה או נדחתה). רעננו את הרשימה.');
         } else {
           showToast('הבקשה לא נמצאה (ייתכן שנמחקה). רעננו ונסו שוב.');
         }

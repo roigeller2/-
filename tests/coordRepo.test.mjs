@@ -105,14 +105,43 @@ test('acceptCoord: second accept on same post → accepted_exists/409 (from uniq
   assert.deepEqual(r, { status: 'blocked', reason: 'accepted_exists', httpStatus: 409 });
 });
 
-test('acceptCoord: documented existing behavior — accepting a cancelled request is allowed', async () => {
+test('acceptCoord: cannot accept a cancelled request (not_pending/409)', async () => {
   const db = makeFakeCoordDb({
     coords: [{ id: 'c1', post_id: 'post1', request_status: 'cancelled' }],
     postings: [{ id: 'post1', owner_id: 'u-owner' }],
   });
   const r = await acceptCoord('c1', owner, 'u-owner', db);
-  assert.equal(r.status, 'ok'); // no from-state guard (preserved behavior)
-  assert.equal(r.value[0].requestStatus, 'accepted');
+  assert.deepEqual(r, { status: 'blocked', reason: 'not_pending', httpStatus: 409 });
+});
+
+test('acceptCoord: cannot accept a rejected request (not_pending/409)', async () => {
+  const db = makeFakeCoordDb({
+    coords: [{ id: 'c1', post_id: 'post1', request_status: 'rejected' }],
+    postings: [{ id: 'post1', owner_id: 'u-owner' }],
+  });
+  const r = await acceptCoord('c1', owner, 'u-owner', db);
+  assert.deepEqual(r, { status: 'blocked', reason: 'not_pending', httpStatus: 409 });
+});
+
+// release path preserved: an ACCEPTED request can still be rejected/cancelled to free the posting
+test('rejectCoord: owner can reject an accepted request (release path)', async () => {
+  const db = makeFakeCoordDb({
+    coords: [{ id: 'c1', post_id: 'post1', request_status: 'accepted' }],
+    postings: [{ id: 'post1', owner_id: 'u-owner' }],
+  });
+  const r = await rejectCoord('c1', owner, 'u-owner', db);
+  assert.equal(r.status, 'ok');
+  assert.equal(r.value[0].requestStatus, 'rejected');
+});
+
+test('cancelCoord: requester can cancel an accepted request (release path)', async () => {
+  const db = makeFakeCoordDb({
+    coords: [{ id: 'c1', post_id: 'post1', request_status: 'accepted', requester_id: 'u-req' }],
+    postings: [{ id: 'post1', owner_id: 'u-owner' }],
+  });
+  const r = await cancelCoord('c1', other, 'u-req', db);
+  assert.equal(r.status, 'ok');
+  assert.equal(r.value[0].requestStatus, 'cancelled');
 });
 
 // ---------- reject / setStage / setExec (posting owner) ----------
