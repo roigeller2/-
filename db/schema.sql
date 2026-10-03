@@ -1,8 +1,9 @@
 -- ============================================================================
 -- coordination-app — סכמת Supabase Postgres (fresh start, ללא migration מ-Redis)
 -- ============================================================================
--- להרצה מול ה-Direct connection (port 5432 / DIRECT_URL) או דרך SQL Editor של
--- Supabase, בסביבת Preview בלבד. אין להריץ מול Production בשלב זה.
+-- להרצה על מסד *ריק* דרך SQL Editor של Supabase (או מול Direct connection 5432).
+-- הורץ בפועל על coordination-app-production (eu-central-1) עם RLS מופעל (ראה בתחתית).
+-- הקובץ מיועד להרצה חד-פעמית על מסד ריק (create table רגיל, ללא IF NOT EXISTS).
 --
 -- טבלאות Auth.js תואמות ל-@auth/pg-adapter@1.11.3 — שמות העמודות וה-casing
 -- (camelCase במרכאות כפולות) מאומתים מקוד המקור של האדפטר. אין לשנותם.
@@ -138,3 +139,19 @@ create table collection_versions (
 );
 insert into collection_versions (key, version)
 values ('postings', 0), ('coordination-requests', 0);
+
+-- ---------- Row Level Security ----------
+-- RLS מופעל על כל 9 הטבלאות (משקף את מצב ה-DB שהורץ עם "Run and enable RLS", ומשביע את
+-- Security Advisor של Supabase). אין policies בכוונה: האפליקציה מתחברת כ-owner (תפקיד postgres
+-- דרך ה-pooler), שעוקף RLS לחלוטין, ולכן אין צורך ב-policies. תפקידי PostgREST (anon/authenticated)
+-- אינם בשימוש בפרויקט הזה ולכן נחסמים כברירת מחדל — וזה רצוי. אם בעתיד ייחשף גישה ישירה דרך
+-- PostgREST, יש להוסיף policies מפורשות לפני כן.
+alter table users                 enable row level security;
+alter table accounts              enable row level security;
+alter table sessions              enable row level security;
+alter table verification_token    enable row level security;
+alter table profiles              enable row level security;
+alter table postings              enable row level security;
+alter table coordination_requests enable row level security;
+alter table notifications         enable row level security;
+alter table collection_versions   enable row level security;
