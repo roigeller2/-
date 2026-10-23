@@ -2,7 +2,7 @@ import './globals.css';
 import Providers from './providers';
 
 export const metadata = {
-  title: 'מערכת תיאום אימונים משותפים',
+  title: 'אתר אימונים',
   description: 'תיאום אימונים משותפים בין טייסות מסוקים לכוחות קרקעיים',
 };
 
